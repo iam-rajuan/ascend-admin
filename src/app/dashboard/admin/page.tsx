@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useAdminStore, AdminTab, ConfirmationItem, ServiceStatus } from "@/store/admin-store";
 import { AscendLogo } from "@/components/ascend-logo";
+import { RoleProfileView } from "@/components/profile/role-profile-view";
 import {
   Shield,
   Users,
@@ -37,6 +38,7 @@ import {
   Clock,
   Check,
   UserCheck,
+  User,
 } from "lucide-react";
 
 export default function AdminDashboardPage() {
@@ -158,6 +160,12 @@ export default function AdminDashboardPage() {
               badge={adminStore.services.filter(s => s.status !== "Online").length > 0 ? "alert" : undefined}
               badgeColor="red"
             />
+            <SidebarNavItem
+              icon={UserCheck}
+              label="Profile"
+              active={adminStore.activeTab === "profile"}
+              onClick={() => adminStore.setActiveTab("profile")}
+            />
           </nav>
         </div>
 
@@ -207,7 +215,12 @@ export default function AdminDashboardPage() {
             </span>
 
             {/* User Dropdown badge */}
-            <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => adminStore.setActiveTab("profile")}
+              className="flex items-center gap-2.5 hover:opacity-80 transition cursor-pointer text-left focus:outline-none"
+              title="Click to view & edit Profile"
+              type="button"
+            >
               <div className="size-7 rounded-full bg-[#0da2b3]/15 text-[#0da2b3] font-bold text-xs flex items-center justify-center border border-[#0da2b3]/25">
                 LA
               </div>
@@ -215,7 +228,7 @@ export default function AdminDashboardPage() {
                 <p className="text-xs font-bold text-slate-800 dark:text-white leading-tight">Lead Admin</p>
                 <p className="text-[9px] text-slate-400 leading-none">OPS Global</p>
               </div>
-            </div>
+            </button>
 
             {/* Theme switcher */}
             <button
@@ -291,6 +304,9 @@ export default function AdminDashboardPage() {
               setSystemChanged={setSystemChanged}
               triggerToast={triggerToast}
             />
+          )}
+          {adminStore.activeTab === "profile" && (
+            <RoleProfileView roleId="admin" roleName="Admin" />
           )}
 
         </main>

@@ -36,7 +36,9 @@ import {
   UserCheck,
 } from "lucide-react";
 
-type TabType = "overview" | "dashboard" | "people" | "plans" | "coverage" | "messages";
+import { RoleProfileView } from "@/components/profile/role-profile-view";
+
+type TabType = "overview" | "dashboard" | "people" | "plans" | "coverage" | "messages" | "profile";
 
 interface MessageRow {
   sender: "scs" | "airman";
@@ -230,6 +232,7 @@ export default function ScsDashboard() {
               { id: "plans", label: "Plans", icon: ClipboardList },
               { id: "coverage", label: "Coverage", icon: FileText },
               { id: "messages", label: "Messages", icon: MessageSquare },
+              { id: "profile", label: "Profile", icon: UserCheck },
             ].map((item) => {
               const Icon = item.icon;
               return (
@@ -296,26 +299,35 @@ export default function ScsDashboard() {
             </div>
 
             {/* Profile Context */}
-            <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActiveTab("profile")}
+              className="flex items-center gap-3 hover:opacity-80 transition cursor-pointer text-left focus:outline-none"
+              title="Click to view & edit Profile"
+              type="button"
+            >
               <div className="text-right flex flex-col items-end">
-                <span className="text-xs font-bold text-slate-800 dark:text-white block">TSgt Marcus Lee</span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight font-sans">Senior SCS &middot; 23rd SFS</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-white block">Cmdr Rachel Taylor</span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight font-sans">SCS Director &middot; 23rd SFS</span>
               </div>
-              <div className="size-8 rounded-full bg-cyan-500 text-white font-sans font-black text-xs flex items-center justify-center select-none border border-slate-200 dark:border-white/5">
-                ML
+              <div className="size-8 rounded-full bg-[#0da2b3]/15 text-[#0da2b3] font-sans font-black text-xs flex items-center justify-center select-none border border-[#0da2b3]/25">
+                RT
               </div>
-            </div>
+            </button>
           </div>
         </header>
 
         {/* CUI BANNER */}
         <div className="h-6 w-full bg-slate-900 border-b border-slate-800 flex items-center justify-center px-6 text-[9px] font-mono tracking-wider text-slate-455 flex-shrink-0 select-none z-10 font-sans">
           <span className="text-[#0da2b3] mr-2 font-black">•</span>
-          {reviewingAirmanId ? `CUI // OPSEC · Roster view · J. Reyes drill-in · audit logged` : `CUI // OPSEC · Messages are audit-logged · SCS flight`}
+          {reviewingAirmanId ? `CUI // OPSEC · Roster view · J. Reyes drill-in · audit logged` : activeTab === "profile" ? "CUI // OPSEC · SCS User Profile & Settings" : `CUI // OPSEC · Messages are audit-logged · SCS flight`}
         </div>
 
         {/* MAIN VIEWPORT */}
         <main className="flex-1 overflow-y-auto bg-[#f8fafc] dark:bg-[#070a13] px-6 py-8 md:px-8 space-y-8">
+          
+          {!reviewingAirmanId && activeTab === "profile" && (
+            <RoleProfileView roleId="scs" roleName="SCS" />
+          )}
           
           {/* Active Profile detail (J. Reyes drill-in detail) */}
           {reviewingAirmanId && (

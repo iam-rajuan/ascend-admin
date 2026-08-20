@@ -32,7 +32,10 @@ import {
   Lock,
 } from "lucide-react";
 
-type TabType = "dashboard" | "assignment" | "reconditioning";
+import { RoleProfileView } from "@/components/profile/role-profile-view";
+import { UserCheck } from "lucide-react";
+
+type TabType = "dashboard" | "assignment" | "reconditioning" | "profile";
 
 export default function PlanDashboard() {
   const router = useRouter();
@@ -61,7 +64,7 @@ export default function PlanDashboard() {
   // Load persistent active tab on client mount
   useEffect(() => {
     const savedTab = localStorage.getItem("ascend_plan_active_tab") as TabType | null;
-    if (savedTab && ["dashboard", "assignment", "reconditioning"].includes(savedTab)) {
+    if (savedTab && ["dashboard", "assignment", "reconditioning", "profile"].includes(savedTab)) {
       setActiveTabInternal(savedTab);
     }
   }, []);
@@ -86,11 +89,7 @@ export default function PlanDashboard() {
       initialTheme = savedTheme;
     }
     document.documentElement.classList.toggle("dark", initialTheme === "dark");
-    
-    const timer = setTimeout(() => {
-      setTheme(initialTheme);
-    }, 0);
-    return () => clearTimeout(timer);
+    setTheme(initialTheme);
   }, []);
 
   const toggleTheme = () => {
@@ -115,8 +114,16 @@ export default function PlanDashboard() {
   return (
     <div className="flex h-screen w-screen bg-[#f0f4f9] dark:bg-[#070a13] text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200 overflow-hidden">
       
+      {/* TOAST FEEDBACK BANNER */}
+      {showConfirmToast && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-xl shadow-2xl border border-slate-700 dark:border-slate-300 text-xs font-semibold animate-fade-in">
+          <CheckCircle className="size-4 text-[#0da2b3]" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* LEFT SIDEBAR */}
-      <aside className="w-64 bg-white dark:bg-[#0e1628] flex flex-col justify-between border-r border-slate-200 dark:border-white/5 flex-shrink-0 z-30">
+      <aside className="w-64 bg-white dark:bg-[#0e1628] text-slate-600 dark:text-slate-300 flex flex-col justify-between border-r border-slate-200 dark:border-white/5 flex-shrink-0 z-30">
         <div>
           {/* Brand logo wrapper */}
           <div className="p-5 border-b border-slate-200 dark:border-white/5 flex items-center justify-between">
@@ -168,6 +175,17 @@ export default function PlanDashboard() {
               <Activity className="size-4" />
               Reconditioning
             </button>
+            <button
+              onClick={() => setActiveTab("profile")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
+                activeTab === "profile"
+                  ? "bg-[#0da2b3]/10 text-[#0da2b3] dark:text-[#0da2b3]"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
+              }`}
+            >
+              <UserCheck className="size-4" />
+              Profile
+            </button>
           </nav>
         </div>
 
@@ -217,7 +235,12 @@ export default function PlanDashboard() {
             </div>
 
             {/* Profile context */}
-            <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActiveTab("profile")}
+              className="flex items-center gap-3 hover:opacity-80 transition cursor-pointer text-left focus:outline-none"
+              title="Click to view & edit Profile"
+              type="button"
+            >
               <div className="text-right">
                 <span className="text-xs font-bold text-slate-800 dark:text-white block">Lt Col A. Park</span>
                 <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight">Plan · Wing scheduler</span>
@@ -225,7 +248,7 @@ export default function PlanDashboard() {
               <div className="size-8 rounded-full bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20 font-sans font-black text-xs flex items-center justify-center select-none">
                 AP
               </div>
-            </div>
+            </button>
           </div>
         </header>
 
@@ -238,6 +261,10 @@ export default function PlanDashboard() {
         {/* 3. WORKSPACE CONTAINER */}
         <main className="flex-1 overflow-y-auto bg-[#f8fafc] dark:bg-[#070a13] px-6 py-8 md:px-8 space-y-8">
           
+          {activeTab === "profile" && (
+            <RoleProfileView roleId="plan" roleName="Plan" />
+          )}
+
           {/* Tab 1: MAIN DASHBOARD */}
           {activeTab === "dashboard" && (
             <div className="space-y-8 animate-fade-in pb-16">

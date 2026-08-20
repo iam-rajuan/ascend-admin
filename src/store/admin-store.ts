@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 
-export type AdminTab = "overview" | "roles" | "scope" | "audit-log" | "exports" | "system";
+export type AdminTab = "overview" | "roles" | "scope" | "audit-log" | "exports" | "system" | "profile";
 
 export type ConfirmationItem = {
   id: string;

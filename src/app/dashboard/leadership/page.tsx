@@ -28,7 +28,10 @@ import {
   Search,
 } from "lucide-react";
 
-type TabType = "index" | "aggregate" | "trends" | "reports" | "briefings";
+import { RoleProfileView } from "@/components/profile/role-profile-view";
+import { UserCheck, User } from "lucide-react";
+
+type TabType = "index" | "aggregate" | "trends" | "reports" | "briefings" | "profile";
 
 export default function LeadershipDashboard() {
   const router = useRouter();
@@ -108,14 +111,31 @@ export default function LeadershipDashboard() {
   return (
     <div className="flex h-screen w-screen bg-[#f0f4f9] dark:bg-[#070a13] text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200 overflow-hidden">
       
+      {/* CONFIRMATION TOAST BANNER */}
+      {showConfirmToast && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-xl shadow-2xl border border-slate-700 dark:border-slate-300 text-xs font-semibold animate-fade-in">
+          <CheckCircle className="size-4 text-[#0da2b3]" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* LEFT SIDEBAR */}
-      <aside className="w-64 bg-white dark:bg-[#0e1628] text-slate-600 dark:text-slate-300 flex flex-col justify-between border-r border-slate-200 dark:border-white/5 flex-shrink-0 z-30">
+      <aside className="w-64 bg-white dark:bg-[#0e1628] border-r border-slate-200 dark:border-white/5 flex flex-col justify-between flex-shrink-0 z-30">
         <div>
-          {/* Top Sidebar Header */}
-          <div className="p-4 border-b border-slate-100 dark:border-white/5">
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-900/60 text-slate-800 dark:text-slate-200">
-              <span className="size-2 rounded-full bg-[#0da2b3]"></span>
-              <span className="text-xs font-bold font-sans">Leadership · 23rd SFS</span>
+          {/* Header Brand Badge */}
+          <div className="p-6 border-b border-slate-100 dark:border-white/5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="size-9 rounded-xl bg-slate-900 text-[#0da2b3] dark:bg-white dark:text-[#0da2b3] font-bold flex items-center justify-center text-xs shadow-sm">
+                LE
+              </div>
+              <div>
+                <span className="text-sm font-extrabold tracking-tight text-slate-800 dark:text-white block leading-tight">
+                  Leadership
+                </span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium tracking-wider">
+                  OPS COMMAND METRICS
+                </span>
+              </div>
             </div>
           </div>
 
@@ -181,6 +201,17 @@ export default function LeadershipDashboard() {
                   <Layers className="size-4" />
                   Briefings
                 </button>
+                <button
+                  onClick={() => setActiveTab("profile")}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold transition duration-150 cursor-pointer ${
+                    activeTab === "profile"
+                      ? "bg-[#0da2b3]/10 text-[#0da2b3]"
+                      : "hover:bg-slate-50 dark:hover:bg-slate-900/50 text-slate-600 dark:text-slate-400"
+                  }`}
+                >
+                  <UserCheck className="size-4" />
+                  Profile
+                </button>
               </nav>
             </div>
           </div>
@@ -226,7 +257,12 @@ export default function LeadershipDashboard() {
             </div>
 
             {/* Profile Dropdown */}
-            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-100 dark:border-white/5 text-slate-800 dark:text-white">
+            <button
+              onClick={() => setActiveTab("profile")}
+              className="flex items-center gap-2.5 pl-2 border-l border-slate-100 dark:border-white/5 text-slate-800 dark:text-white hover:opacity-80 transition cursor-pointer text-left focus:outline-none"
+              title="Click to view & edit Profile"
+              type="button"
+            >
               <div className="size-7 rounded-full bg-slate-200 dark:bg-slate-850 text-slate-700 dark:text-slate-300 font-bold flex items-center justify-center text-xs">
                 JM
               </div>
@@ -239,7 +275,7 @@ export default function LeadershipDashboard() {
                 </span>
               </div>
               <ChevronDown className="size-3.5 text-slate-400 cursor-pointer" />
-            </div>
+            </button>
 
             {/* Notification Bell */}
             <button className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer">
@@ -267,6 +303,10 @@ export default function LeadershipDashboard() {
 
         {/* 3. MAIN SCROLLABLE VIEWPORT */}
         <main className="flex-1 overflow-y-auto p-6 md:p-8 bg-[#f8fafc] dark:bg-[#070a13] space-y-8">
+          
+          {activeTab === "profile" && (
+            <RoleProfileView roleId="leadership" roleName="Leadership" />
+          )}
           
           {activeTab === "index" && (
             <div className="space-y-8 animate-fade-in">

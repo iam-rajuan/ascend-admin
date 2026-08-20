@@ -31,7 +31,10 @@ import {
   ChevronRight,
 } from "lucide-react";
 
-type TabType = "dashboard" | "notes" | "records" | "messages";
+import { RoleProfileView } from "@/components/profile/role-profile-view";
+import { UserCheck } from "lucide-react";
+
+type TabType = "dashboard" | "notes" | "records" | "messages" | "profile";
 
 export default function MpDashboard() {
   const router = useRouter();
@@ -217,6 +220,17 @@ export default function MpDashboard() {
               <MessageSquare className="size-4" />
               Messages
             </button>
+            <button
+              onClick={() => setActiveTab("profile")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
+                activeTab === "profile"
+                  ? "bg-[#0da2b3]/10 text-[#0da2b3]"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
+              }`}
+            >
+              <UserCheck className="size-4" />
+              Profile
+            </button>
           </nav>
         </div>
 
@@ -266,15 +280,20 @@ export default function MpDashboard() {
             </div>
 
             {/* Profile context */}
-            <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActiveTab("profile")}
+              className="flex items-center gap-3 hover:opacity-80 transition cursor-pointer text-left focus:outline-none"
+              title="Click to view & edit Profile"
+              type="button"
+            >
               <div className="text-right">
-                <span className="text-xs font-bold text-slate-800 dark:text-white block">Dr. M. Khan</span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight font-sans">MP &middot; 23rd MDG</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-white block">Dr. Aris Thorne</span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight font-sans">Chief MP Psychologist</span>
               </div>
-              <div className="size-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-sans font-black text-xs flex items-center justify-center select-none border border-slate-200 dark:border-white/5">
-                MK
+              <div className="size-8 rounded-full bg-[#0da2b3]/15 text-[#0da2b3] font-sans font-black text-xs flex items-center justify-center select-none border border-[#0da2b3]/25">
+                AT
               </div>
-            </div>
+            </button>
           </div>
         </header>
 
@@ -286,10 +305,15 @@ export default function MpDashboard() {
           {!editingNoteId && activeTab === "notes" && "CUI // OPSEC · Confidential session note · encrypted at rest"}
           {!editingNoteId && activeTab === "records" && "CUI // OPSEC · Mental Performance records · access reason required"}
           {!editingNoteId && activeTab === "messages" && "CUI // OPSEC · Secure threads · confidential messages"}
+          {!editingNoteId && activeTab === "profile" && "CUI // OPSEC · MP User Profile & Settings"}
         </div>
 
         {/* 3. WORKSPACE CONTAINER */}
         <main className="flex-1 overflow-y-auto bg-[#f8fafc] dark:bg-[#070a13] px-6 py-8 md:px-8 space-y-8">
+          
+          {!editingNoteId && activeTab === "profile" && (
+            <RoleProfileView roleId="mp" roleName="MP" />
+          )}
           
           {/* Active Note Editor Mode */}
           {editingNoteId && (
