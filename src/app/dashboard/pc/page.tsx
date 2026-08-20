@@ -3,7 +3,15 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
+import { useTheme } from "@/hooks/use-theme";
+import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-current-user";
+import { initBrandColor } from "@/lib/constants";
+import { POPULATION_LEVELS, PRIVACY_STATES } from "@/lib/terminology";
+import { IconButton } from "@/components/ui/icon-button";
 import { AscendLogo } from "@/components/ascend-logo";
+import { RecordDetailDialog } from "@/components/ui/record-detail-dialog";
+import { CreateRecordModal } from "@/components/ui/create-record-modal";
 import {
   Home,
   Sliders,
@@ -34,22 +42,57 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { RoleProfileView } from "@/components/profile/role-profile-view";
-import { UserCheck } from "lucide-react";
+type TabType = "caseload" | "reflections" | "messages";
 
-type TabType = "caseload" | "reflections" | "messages" | "profile";
+type MessageThread = {
+  code: string;
+  time: string;
+  txt: string;
+  unread: number;
+  active: boolean;
+};
 
 export default function PcDashboard() {
   const router = useRouter();
-  const { isAuthenticated, logout, setSelectedRole } = useAuthStore();
+  const { isAuthenticated, logout } = useAuthStore();
+  const currentUser = useCurrentUser();
+  const { theme, toggleTheme } = useTheme();
+  const { show: showConfirmToast, message: toastMessage, triggerToast } = useToast();
   const [activeTabInternal, setActiveTabInternal] = useState<TabType>("caseload");
-  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [hasMounted, setHasMounted] = useState(false);
-  const [showConfirmToast, setShowConfirmToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState("");
-  
+
+  // Caseload · opted-in filter pill state
+  const [caseloadActionFilter, setCaseloadActionFilter] = useState<string>("All");
+
+  // Spiritual reflection entries theme filter pill state
+  const [reflectionThemeFilter, setReflectionThemeFilter] = useState<string>("All themes");
+  const [reflectionSearch, setReflectionSearch] = useState("");
+
+  // Phase 5: Date-range filter state for reflection entries (Set B)
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
+  const [filterApplied, setFilterApplied] = useState<boolean>(false);
+
+  // Phase 5: Seeded reflection entries (Set A) — varied themes so each pill filter shows multiple rows
+  type ReflectionEntry = { date: string; code: string; theme: string; len: string; preview: string; flag: string; col: string };
+  const [reflectionEntries, setReflectionEntries] = useState<ReflectionEntry[]>([
+    { date: "27 Jul", code: "A-1042", theme: "Purpose", len: "312 words", preview: "\u201CFinally sat with the question long enough to hear my own answer.\u201D", flag: "Pastoral", col: "green" },
+    { date: "26 Jul", code: "A-1356", theme: "Values", len: "184 words", preview: "\u201CWrote down the three things I won't trade. They held up.\u201D", flag: "Pastoral", col: "green" },
+    { date: "24 Jul", code: "A-1218", theme: "Grief", len: "421 words", preview: "\u201CNot ready to talk about it. But I want a place to put the words.\u201D", flag: "Tender", col: "green" },
+    { date: "22 Jul", code: "A-1087", theme: "Transition", len: "256 words", preview: "\u201CPCS in nine weeks. Trying to be present here, now.\u201D", flag: "Pastoral", col: "green" },
+    { date: "21 Jul", code: "A-1421", theme: "Purpose", len: "298 words", preview: "\u201CThe quiet still finds me, even on the good days.\u201D", flag: "Pastoral", col: "green" },
+    { date: "19 Jul", code: "A-1042", theme: "Gratitude", len: "147 words", preview: "\u201CA long walk. Cold air. The first star I noticed all month.\u201D", flag: "Pastoral", col: "green" },
+    { date: "17 Jul", code: "A-1218", theme: "Grief", len: "262 words", preview: "\u201CThe anniversary came and went. Quieter than last year.\u201D", flag: "Tender", col: "green" },
+    { date: "15 Jul", code: "A-1503", theme: "Transition", len: "204 words", preview: "\u201CNew chapel. Same questions. Smaller room.\u201D", flag: "Pastoral", col: "green" },
+    { date: "12 Jul", code: "A-1356", theme: "Values", len: "189 words", preview: "\u201CTwo of the three things I wrote down survived a bad day. The third needs revising.\u201D", flag: "Pastoral", col: "green" },
+    { date: "10 Jul", code: "A-1087", theme: "Gratitude", len: "152 words", preview: "\u201CCoffee on the porch. The dog stayed close.\u201D", flag: "Pastoral", col: "green" },
+    { date: "08 Jul", code: "A-1421", theme: "Purpose", len: "277 words", preview: "\u201CFelt the old pull again. Did not follow it. Sat with it instead.\u201D", flag: "Pastoral", col: "green" },
+    { date: "05 Jul", code: "A-1503", theme: "Transition", len: "318 words", preview: "\u201CForward motion. Not fast. But present.\u201D", flag: "Pastoral", col: "green" }
+  ]);
+
   // Chat messaging state
   const [chatMessage, setChatMessage] = useState("");
+  const [viewingThread, setViewingThread] = useState<MessageThread | null>(null);
   const [messagesList, setMessagesList] = useState([
     { sender: "coach", text: "Try the 5-minute gratitude block tonight — no writing needed, just the sitting.", time: "18:40", date: "26 JULY" },
     { sender: "airman", text: "Did it two nights running. Quieter than I expected.", time: "21:05", date: "26 JULY" },
@@ -57,11 +100,30 @@ export default function PcDashboard() {
     { sender: "airman", text: "Yes. Wednesday works. Same time?", time: "09:31", date: "27 JULY" }
   ]);
 
-  const triggerToast = (msg: string) => {
-    setToastMessage(msg);
-    setShowConfirmToast(true);
-    setTimeout(() => setShowConfirmToast(false), 3000);
-  };
+  // New pastoral note state
+  type PastoralNote = { airmanCode: string; date: string; body: string };
+  const [showNewPastoralNoteModal, setShowNewPastoralNoteModal] = useState(false);
+  const [pastoralNotes, setPastoralNotes] = useState<PastoralNote[]>([
+    {
+      airmanCode: "A-1503",
+      date: "28 Jul",
+      body: "First-time engagement. Airman arrived quiet, attentive. Asked about cadence (weekly) -"
+    }
+  ]);
+
+  // Phase 6: Pastoral composer state (controlled textarea + drafts + privileged flag)
+  const [pastoralNoteBody, setPastoralNoteBody] = useState<string>(
+    "First-time engagement. Airman arrived quiet, attentive. Asked about cadence (weekly) —"
+  );
+  const [pastoralDrafts, setPastoralDrafts] = useState<{ body: string; savedAt: string }>({
+    body: "First-time engagement. Airman arrived quiet, attentive. Asked about cadence (weekly) —",
+    savedAt: new Date().toISOString()
+  });
+
+  // Reach out state
+  type ReachOut = { airmanCode: string; topic: string; preview: string };
+  const [showReachOutModal, setShowReachOutModal] = useState(false);
+  const [reachOuts, setReachOuts] = useState<ReachOut[]>([]);
 
   const handleSendMessage = () => {
     if (!chatMessage.trim()) return;
@@ -106,32 +168,10 @@ export default function PcDashboard() {
     }
   }, [isAuthenticated, hasMounted, router]);
 
-  // Sync theme with local storage & document element
+  // Inject brand color CSS variables on mount
   useEffect(() => {
-    const savedTheme = localStorage.getItem("ascend_admin_theme") as "light" | "dark" | null;
-    let initialTheme: "light" | "dark" = "light";
-    if (savedTheme) {
-      initialTheme = savedTheme;
-    }
-    document.documentElement.classList.toggle("dark", initialTheme === "dark");
-    
-    const timer = setTimeout(() => {
-      setTheme(initialTheme);
-    }, 0);
-    return () => clearTimeout(timer);
+    initBrandColor();
   }, []);
-
-  const toggleTheme = () => {
-    const newTheme = theme === "light" ? "dark" : "light";
-    setTheme(newTheme);
-    localStorage.setItem("ascend_admin_theme", newTheme);
-    document.documentElement.classList.toggle("dark", newTheme === "dark");
-  };
-
-  const handleBackToRoles = () => {
-    setSelectedRole(null);
-    router.push("/roles");
-  };
 
   const handleLogout = () => {
     logout();
@@ -139,6 +179,35 @@ export default function PcDashboard() {
   };
 
   if (!hasMounted || !isAuthenticated) return null;
+
+  // Phase 5: Helper to apply theme + search + date range filters to reflection entries
+  const filterReflections = (entries: ReflectionEntry[]): ReflectionEntry[] => {
+    const parseDate = (s: string): Date | null => {
+      const trimmed = s.trim();
+      if (!trimmed) return null;
+      const parts = trimmed.split(/\s+/);
+      const day = parseInt(parts[0], 10);
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const monthIdx = months.indexOf(parts[1] ?? "");
+      if (isNaN(day) && monthIdx < 0) return null;
+      return new Date(2026, monthIdx >= 0 ? monthIdx : 0, isNaN(day) ? 1 : day);
+    };
+    const fromD = parseDate(fromDate);
+    const toD = parseDate(toDate);
+    const dateFilterActive = filterApplied && (fromD || toD);
+    const query = reflectionSearch.trim().toLowerCase();
+    return entries.filter((p) => {
+      const matchesTheme = reflectionThemeFilter === "All themes" || p.theme === reflectionThemeFilter;
+      const matchesSearch = query === "" || p.code.toLowerCase().includes(query) || p.theme.toLowerCase().includes(query);
+      if (!matchesTheme || !matchesSearch) return false;
+      if (!dateFilterActive) return true;
+      const entryDate = parseDate(p.date);
+      if (!entryDate) return true;
+      if (fromD && entryDate < fromD) return false;
+      if (toD && entryDate > toD) return false;
+      return true;
+    });
+  };
 
   return (
     <div className="flex h-screen w-screen bg-[#f0f4f9] dark:bg-[#070a13] text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200 overflow-hidden">
@@ -149,7 +218,7 @@ export default function PcDashboard() {
           {/* Brand logo wrapper */}
           <div className="p-5 border-b border-slate-200 dark:border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full bg-[#0da2b3]"></span>
+              <span className="size-2 rounded-full bg-[var(--brand-color)]"></span>
               <span className="text-sm font-black tracking-tight text-slate-800 dark:text-white uppercase font-sans">
                 Purpose Coach
               </span>
@@ -167,8 +236,8 @@ export default function PcDashboard() {
               onClick={() => setActiveTab("caseload")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
                 activeTab === "caseload"
-                  ? "bg-[#0da2b3]/10 text-[#0da2b3] dark:text-[#0da2b3]"
-                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
+                  ? "bg-[var(--brand-color)/10] text-[var(--brand-color)] dark:text-[var(--brand-color)]"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-50/40 dark:hover:bg-slate-900/60"
               }`}
             >
               <Home className="size-4" />
@@ -178,8 +247,8 @@ export default function PcDashboard() {
               onClick={() => setActiveTab("reflections")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
                 activeTab === "reflections"
-                  ? "bg-[#0da2b3]/10 text-[#0da2b3] dark:text-[#0da2b3]"
-                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
+                  ? "bg-[var(--brand-color)/10] text-[var(--brand-color)] dark:text-[var(--brand-color)]"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-50/40 dark:hover:bg-slate-900/60"
               }`}
             >
               <FileText className="size-4" />
@@ -189,23 +258,12 @@ export default function PcDashboard() {
               onClick={() => setActiveTab("messages")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
                 activeTab === "messages"
-                  ? "bg-[#0da2b3]/10 text-[#0da2b3] dark:text-[#0da2b3]"
-                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
+                  ? "bg-[var(--brand-color)/10] text-[var(--brand-color)] dark:text-[var(--brand-color)]"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-50/40 dark:hover:bg-slate-900/60"
               }`}
             >
               <MessageSquare className="size-4" />
               Messages
-            </button>
-            <button
-              onClick={() => setActiveTab("profile")}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
-                activeTab === "profile"
-                  ? "bg-[#0da2b3]/10 text-[#0da2b3] dark:text-[#0da2b3]"
-                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
-              }`}
-            >
-              <UserCheck className="size-4" />
-              Profile
             </button>
           </nav>
         </div>
@@ -213,15 +271,15 @@ export default function PcDashboard() {
         {/* User Session Controls */}
         <div className="p-4 border-t border-slate-200 dark:border-white/5 space-y-2">
           <button
-            onClick={handleBackToRoles}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-550 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-55 dark:hover:bg-slate-900 transition cursor-pointer"
+            onClick={() => router.push("/dashboard/profile")}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-900 transition cursor-pointer"
           >
             <ArrowLeft className="size-4" />
-            Back to roles
+            My profile
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-red-500 hover:text-red-650 hover:bg-red-55/20 dark:hover:bg-red-950/20 transition cursor-pointer"
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-red-500 hover:text-red-600 hover:bg-red-50/20 dark:hover:bg-red-950/20 transition cursor-pointer"
           >
             <LogOut className="size-4" />
             Log out
@@ -238,36 +296,40 @@ export default function PcDashboard() {
             <AscendLogo width={20} height={20} showDetails={false} />
             <span className="text-sm font-semibold tracking-tight text-slate-800 dark:text-white">Ascend</span>
             <span className="text-xs text-slate-400 dark:text-slate-500 font-light select-none">/</span>
-            <span className="text-xs font-medium text-slate-550 dark:text-slate-400">Purpose Coach</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Purpose Coach</span>
           </div>
 
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-4 border-r border-slate-200 dark:border-white/5 pr-6">
-              <button className="relative p-1.5 text-slate-400 hover:text-slate-655 dark:hover:text-white transition cursor-pointer">
-                <Bell className="size-4.5" />
-                <span className="absolute top-1 right-1 size-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#0e1628]"></span>
-              </button>
-              <button
-                onClick={toggleTheme}
-                className="p-1.5 text-slate-400 hover:text-slate-655 dark:hover:text-white transition cursor-pointer"
+              <IconButton
+                icon={Bell}
+                aria-label="Notifications"
+                className="relative p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
+                iconClassName="size-4.5"
               >
-                {theme === "light" ? <Moon className="size-4.5" /> : <Sun className="size-4.5" />}
-              </button>
+                <span className="absolute top-1 right-1 size-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#0e1628]"></span>
+              </IconButton>
+              <IconButton
+                icon={theme === "light" ? Moon : Sun}
+                aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+                onClick={toggleTheme}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
+                iconClassName="size-4.5"
+              />
             </div>
 
             {/* Profile context */}
             <button
-              onClick={() => setActiveTab("profile")}
-              className="flex items-center gap-3 hover:opacity-80 transition cursor-pointer text-left focus:outline-none"
-              title="Click to view & edit Profile"
+              onClick={() => router.push("/dashboard/profile")}
+              className="flex items-center gap-3 cursor-pointer"
               type="button"
             >
               <div className="text-right">
-                <span className="text-xs font-bold text-slate-800 dark:text-white block">Capt E. Rostova</span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight">Performance Coach</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-white block">{currentUser?.name}</span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight">{currentUser?.unit}</span>
               </div>
-              <div className="size-8 rounded-full bg-[#0da2b3]/15 text-[#0da2b3] font-sans font-black text-xs flex items-center justify-center select-none border border-[#0da2b3]/25">
-                ER
+              <div className="size-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-sans font-black text-xs flex items-center justify-center select-none border border-slate-200 dark:border-white/5">
+                {currentUser?.initials}
               </div>
             </button>
           </div>
@@ -279,18 +341,13 @@ export default function PcDashboard() {
           {activeTab === "caseload" && "CUI // OPSEC · Purpose pathway · opt-in only"}
           {activeTab === "reflections" && "CUI // OPSEC · Opt-in records · confidential"}
           {activeTab === "messages" && "CUI // OPSEC · Purpose messages · private channel"}
-          {activeTab === "profile" && "CUI // OPSEC · PC User Profile & Settings"}
         </div>
 
         {/* 3. WORKSPACE CONTAINER */}
         <main className="flex-1 overflow-y-auto bg-[#f8fafc] dark:bg-[#070a13] px-6 py-8 md:px-8 space-y-8">
           
-          {activeTab === "profile" && (
-            <RoleProfileView roleId="pc" roleName="PC" />
-          )}
-          
           {/* Active opt-in consent required warning banner */}
-          <div className="bg-[#fffbeb] dark:bg-amber-950/10 text-slate-800 dark:text-slate-200 p-5 rounded-2xl border border-amber-250 dark:border-white/5 flex gap-3 text-xs leading-relaxed text-left">
+          <div className="bg-[#fffbeb] dark:bg-amber-950/10 text-slate-800 dark:text-slate-200 p-5 rounded-2xl border border-amber-200 dark:border-white/5 flex gap-3 text-xs leading-relaxed text-left">
             <Shield className="size-5 text-amber-500 flex-shrink-0 mt-0.5" />
             <div>
               <span className="font-extrabold">Active opt-in consent required &middot; revoked consent = immediate access removal.</span>
@@ -313,22 +370,26 @@ export default function PcDashboard() {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="text-left">
                   <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">PURPOSE · CHAPLAIN PATHWAY</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-855 dark:text-white">Today's caseload</h1>
-                  <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">
+                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Today's caseload</h1>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     Tuesday, 28 July · A quiet day ahead. Three pastoral consults, twenty-two active reflections, and one first-time engagement to welcome. Take what's here.
                   </p>
+                  <span className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <Users className="size-3" />
+                    {POPULATION_LEVELS.CASELOAD}
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => setActiveTab("reflections")}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-655 dark:text-white hover:bg-slate-55 dark:hover:bg-slate-800 transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-800 transition cursor-pointer"
                   >
                     Reflection log
                   </button>
-                  <button 
-                    onClick={() => triggerToast("Starting new confidential pastoral note")}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#0da2b3] hover:bg-[#0c8a99] text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  <button
+                    onClick={() => setShowNewPastoralNoteModal(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
                   >
                     <Plus className="size-4" /> New pastoral note
                   </button>
@@ -344,7 +405,7 @@ export default function PcDashboard() {
                   { name: "First-time engagements", count: "1", desc: "welcome & consent", arrow: null }
                 ].map((kpi, idx) => (
                   <div key={idx} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-555 block uppercase tracking-wider">{kpi.name}</span>
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider">{kpi.name}</span>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{kpi.count}</h2>
                       {kpi.arrow && (
@@ -362,17 +423,18 @@ export default function PcDashboard() {
               <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white">Caseload · opted-in</h3>
-                    <p className="text-[10px] text-slate-455">Anonymized codes only. No rank, no PII. Use codes when messaging or referencing in pastoral notes.</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Caseload · opted-in</h3>
+                    <p className="text-[10px] text-slate-500">Anonymized codes only. No rank, no PII. Use codes when messaging or referencing in pastoral notes.</p>
                   </div>
                   <div className="flex gap-2">
-                    {["All themes", "Active", "Needs outreach"].map((pill, idx) => (
+                    {["All", "Message", "Open notes", "Reach out", "Welcome"].map((pill, idx) => (
                       <button
                         key={idx}
+                        onClick={() => setCaseloadActionFilter(pill)}
                         className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                          pill === "All themes"
-                            ? "bg-[#0da2b3]/10 border-[#0da2b3]/30 text-[#0da2b3]"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-850 dark:hover:text-white"
+                          pill === caseloadActionFilter
+                            ? "bg-[var(--brand-color)/10] border-[var(--brand-color)/30] text-[var(--brand-color)]"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-800 dark:hover:text-white"
                         }`}
                       >
                         {pill}
@@ -400,8 +462,8 @@ export default function PcDashboard() {
                         { code: "A-1356", date: "06 Jun", cad: "Weekly", contact: "27 Jul · Reflection", act: "Message", actTab: "messages" },
                         { code: "A-1421", date: "22 Jun", cad: "Paused", contact: "02 Jul · Consult", act: "Open notes", actTab: "reflections" },
                         { code: "A-1503", date: "28 Jul", badge: "New", cad: "First-time", contact: "—", act: "Welcome", actTab: "reflections" }
-                      ].map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-55/20 transition">
+                      ].filter((row) => caseloadActionFilter === "All" || row.act === caseloadActionFilter).map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/20 transition">
                           <td className="py-3.5">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-slate-800 dark:text-white font-mono">{row.code}</span>
@@ -412,7 +474,7 @@ export default function PcDashboard() {
                               )}
                             </div>
                           </td>
-                          <td className="py-3.5 text-slate-700 dark:text-slate-350">{row.date}</td>
+                          <td className="py-3.5 text-slate-700 dark:text-slate-300">{row.date}</td>
                           <td className="py-3.5 text-slate-500">{row.cad}</td>
                           <td className="py-3.5 text-slate-500 font-mono text-[11px]">{row.contact}</td>
                           <td className="py-3.5 text-right">
@@ -439,8 +501,8 @@ export default function PcDashboard() {
                 {/* Reflection themes */}
                 <div className="lg:col-span-6 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white">Reflection themes · this month</h3>
-                    <p className="text-[10px] text-slate-455 mt-0.5">Aggregated across 22 entries. Identifies only themes, never authorship.</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Reflection themes · this month</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Aggregated across 22 entries. Identifies only themes, never authorship.</p>
                   </div>
 
                   <div className="space-y-4 pt-2 font-sans text-xs">
@@ -452,7 +514,7 @@ export default function PcDashboard() {
                       { label: "Grief", val: 2, pct: 20 },
                     ].map((themeRow, idx) => (
                       <div key={idx} className="flex items-center justify-between gap-4">
-                        <span className="font-bold text-slate-800 dark:text-slate-250 w-20 flex-shrink-0">{themeRow.label}</span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 w-20 flex-shrink-0">{themeRow.label}</span>
                         <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
                           <div className="h-full bg-slate-400 dark:bg-slate-600 rounded-full" style={{ width: `${themeRow.pct}%` }}></div>
                         </div>
@@ -462,7 +524,7 @@ export default function PcDashboard() {
                   </div>
 
                   <p className="text-[9px] text-slate-400 leading-normal pt-4 border-t border-slate-100 dark:border-white/5 flex items-center gap-1.5 font-mono">
-                    <span className="size-2 rounded-full bg-amber-500"></span>
+                    <span aria-hidden="true" className="size-2 rounded-full bg-amber-500"></span>
                     Theme-count &middot; Of 22 active reflections
                   </p>
                 </div>
@@ -470,8 +532,8 @@ export default function PcDashboard() {
                 {/* Pastoral care today */}
                 <div className="lg:col-span-6 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white">Pastoral care · today</h3>
-                    <p className="text-[10px] text-slate-455 mt-0.5">Three consults on the schedule. Two are returning, one is a welcome.</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Pastoral care · today</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Three consults on the schedule. Two are returning, one is a welcome.</p>
                   </div>
 
                   {/* Vertical Timeline registry */}
@@ -482,30 +544,30 @@ export default function PcDashboard() {
                         title: "A-1042 · Returning",
                         desc: "Continuation - cadence holds steady",
                         badge: "Returning",
-                        badgeCol: "bg-slate-100 dark:bg-slate-800 text-slate-655"
+                        badgeCol: "bg-slate-100 dark:bg-slate-800 text-slate-700"
                       },
                       {
                         time: "11:15 - 60 min",
                         title: "A-1503 · First-time engagement",
                         desc: "Welcome, consent, listening",
                         badge: "Welcome",
-                        badgeCol: "bg-[#0da2b3]/15 text-[#0da2b3]"
+                        badgeCol: "bg-[var(--brand-color)/15] text-[var(--brand-color)]"
                       },
                       {
                         time: "14:00 - 30 min",
                         title: "A-1087 · Brief check-in",
                         desc: "Light pastoral touch · grief, paused",
                         badge: "Brief",
-                        badgeCol: "bg-slate-100 dark:bg-slate-800 text-slate-655"
+                        badgeCol: "bg-slate-100 dark:bg-slate-800 text-slate-700"
                       }
                     ].map((evt, idx) => (
                       <div key={idx} className="relative space-y-1">
                         {/* Timeline Bullet circle */}
-                        <span className="absolute -left-[30px] top-1.5 size-2 rounded-full bg-slate-350 dark:bg-slate-600 border border-white dark:border-[#0e1628]"></span>
+                        <span className="absolute -left-[30px] top-1.5 size-2 rounded-full bg-slate-300 dark:bg-slate-600 border border-white dark:border-[#0e1628]"></span>
                         <div className="space-y-0.5">
                           <span className="text-[8px] font-bold text-slate-400 tracking-wide block uppercase">{evt.time}</span>
                           <div className="flex items-center justify-between gap-4">
-                            <h4 className="text-xs font-bold text-slate-850 dark:text-white font-mono">{evt.title}</h4>
+                            <h4 className="text-xs font-bold text-slate-800 dark:text-white font-mono">{evt.title}</h4>
                             <span className={`px-2 py-0.5 text-[8px] font-bold rounded-full uppercase ${evt.badgeCol}`}>
                               {evt.badge}
                             </span>
@@ -520,7 +582,7 @@ export default function PcDashboard() {
               </div>
 
               {/* Bottom Action strip disclaimer footnote */}
-              <div className="bg-[#f1f5f9] dark:bg-[#0e1628]/60 p-5 rounded-2xl border border-slate-200 dark:border-white/5 text-left text-[10px] text-slate-550 dark:text-slate-400 space-y-2 leading-relaxed font-sans">
+              <div className="bg-[#f1f5f9] dark:bg-[#0e1628]/60 p-5 rounded-2xl border border-slate-200 dark:border-white/5 text-left text-[10px] text-slate-500 dark:text-slate-400 space-y-2 leading-relaxed font-sans">
                 <span className="font-bold text-slate-700 dark:text-white block uppercase tracking-wider text-[8px]">Purpose Action - opt-in only - limited question scope</span>
                 <p>
                   Purpose Action is suggested only for airmen with active consent on this surface. Each action routes through the minimum-necessary question panel &mdash; O1D&mdash;O12, D4, W7&mdash;W8, M7&mdash;M8 &mdash; only &mdash; never through medical controls, never through the unrestricted Performance Summary, never through Level 4 metrics. Revoked consent immediately removes this record from view and from any in-flight action. Safety signals route through a separate, minimum-necessary pathway; no broad cohort labels appear here.
@@ -540,7 +602,7 @@ export default function PcDashboard() {
             <div className="space-y-8 animate-fade-in pb-16">
               
               {/* Confidentials Warning Banner */}
-              <div className="bg-[#e0f2fe]/40 dark:bg-sky-955/5 border border-[#bae6fd]/40 dark:border-white/5 rounded-2xl p-5 text-left flex gap-3 text-xs leading-relaxed text-slate-800 dark:text-slate-200">
+              <div className="bg-[#e0f2fe]/40 dark:bg-sky-950/5 border border-[#bae6fd]/40 dark:border-white/5 rounded-2xl p-5 text-left flex gap-3 text-xs leading-relaxed text-slate-800 dark:text-slate-200">
                 <Lock className="size-5 text-[#3b82f6] flex-shrink-0 mt-0.5" />
                 <div>
                   <span className="font-extrabold">Spiritual reflections &middot; confidential</span>
@@ -554,22 +616,26 @@ export default function PcDashboard() {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="text-left">
                   <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">SPIRITUAL REFLECTIONS · PASTORAL LOG</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-855 dark:text-white">Reflections & records</h1>
-                  <p className="text-xs text-slate-550 dark:text-slate-450 mt-1">
+                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Reflections & records</h1>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     Opt-in confirmations, reflection entries, and confidential notes for airmen who consented to the Purpose pathway.
                   </p>
+                  <span className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <Users className="size-3" />
+                    {POPULATION_LEVELS.CASELOAD}
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => setActiveTab("caseload")}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-655 dark:text-white hover:bg-slate-55 dark:hover:bg-slate-800 transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-800 transition cursor-pointer"
                   >
                     Caseload
                   </button>
-                  <button 
-                    onClick={() => triggerToast("Initializing chaplain reach out message")}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#0da2b3] hover:bg-[#0c8a99] text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  <button
+                    onClick={() => setShowReachOutModal(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
                   >
                     <Plus className="size-4" /> Reach out
                   </button>
@@ -579,8 +645,8 @@ export default function PcDashboard() {
               {/* Opt-in confirmation audit */}
               <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-855 dark:text-white">Opt-in confirmation audit</h3>
-                  <p className="text-[10px] text-slate-455">Every opt-in and opt-out is timestamped and immutable. Trail visible only to Purpose pathway roles.</p>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Opt-in confirmation audit</h3>
+                  <p className="text-[10px] text-slate-500">Every opt-in and opt-out is timestamped and immutable. Trail visible only to Purpose pathway roles.</p>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -596,13 +662,13 @@ export default function PcDashboard() {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-sans">
                       {[
-                        { code: "A-1042", status: "Opted in", recorded: "14 Mar · 14:02", method: "Secure form - signed", witness: "Chaplain (Capt. R. Owens)", col: "blue" },
-                        { code: "A-1087", status: "Opted in", recorded: "02 Apr · 09:30", method: "In-person - verbal confirmation", witness: "Chaplain (Capt. R. Owens)", col: "blue" },
-                        { code: "A-1218", status: "Revoked - paused", recorded: "19 May · 11:11", method: "Casual contact - on request", witness: "—", col: "purple" },
-                        { code: "A-1503", status: "Opted in", recorded: "28 Jul · 08:55", badge: "Today", method: "In-person - verbal confirmation", witness: "Chaplain (Capt. R. Owens)", col: "blue" }
+                        { code: "A-1042", status: PRIVACY_STATES.CONSENT_GRANTED, recorded: "14 Mar · 14:02", method: "Secure form - signed", witness: "Chaplain (Capt. R. Owens)", col: "blue" },
+                        { code: "A-1087", status: PRIVACY_STATES.CONSENT_GRANTED, recorded: "02 Apr · 09:30", method: "In-person - verbal confirmation", witness: "Chaplain (Capt. R. Owens)", col: "blue" },
+                        { code: "A-1218", status: PRIVACY_STATES.CONSENT_WITHDRAWN, recorded: "19 May · 11:11", method: "Casual contact - on request", witness: "—", col: "purple" },
+                        { code: "A-1503", status: PRIVACY_STATES.CONSENT_GRANTED, recorded: "28 Jul · 08:55", badge: "Today", method: "In-person - verbal confirmation", witness: "Chaplain (Capt. R. Owens)", col: "blue" }
                       ].map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-55/20 transition">
-                          <td className="py-3.5 font-bold text-slate-855 dark:text-white font-mono">{row.code}</td>
+                        <tr key={idx} className="hover:bg-slate-50/20 transition">
+                          <td className="py-3.5 font-bold text-slate-900 dark:text-white font-mono">{row.code}</td>
                           <td className="py-3.5">
                             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold ${
                               row.col === "blue" ? "bg-sky-500/10 text-sky-600" : "bg-purple-500/10 text-purple-600"
@@ -611,7 +677,7 @@ export default function PcDashboard() {
                               {row.status}
                             </span>
                           </td>
-                          <td className="py-3.5 text-slate-700 dark:text-slate-350 font-mono">
+                          <td className="py-3.5 text-slate-700 dark:text-slate-300 font-mono">
                             <div className="flex items-center gap-1.5">
                               <span>{row.recorded}</span>
                               {row.badge && (
@@ -621,8 +687,8 @@ export default function PcDashboard() {
                               )}
                             </div>
                           </td>
-                          <td className="py-3.5 text-slate-550 dark:text-slate-400">{row.method}</td>
-                          <td className="py-3.5 text-slate-550 dark:text-slate-400 font-bold">{row.witness}</td>
+                          <td className="py-3.5 text-slate-500 dark:text-slate-400">{row.method}</td>
+                          <td className="py-3.5 text-slate-500 dark:text-slate-400 font-bold">{row.witness}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -634,17 +700,18 @@ export default function PcDashboard() {
               <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white">Spiritual reflection entries</h3>
-                    <p className="text-[10px] text-slate-455">22 active reflections this month. Entries are private to the consenting airman and to you.</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Spiritual reflection entries</h3>
+                    <p className="text-[10px] text-slate-500">22 active reflections this month. Entries are private to the consenting airman and to you.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {["All themes", "Purpose", "Grief", "Transition"].map((themeFilter, idx) => (
                       <button
                         key={idx}
+                        onClick={() => setReflectionThemeFilter(themeFilter)}
                         className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                          themeFilter === "All themes"
-                            ? "bg-[#0da2b3]/10 border-[#0da2b3]/30 text-[#0da2b3]"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-855 dark:hover:text-white"
+                          themeFilter === reflectionThemeFilter
+                            ? "bg-[var(--brand-color)/10] border-[var(--brand-color)/30] text-[var(--brand-color)]"
+                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-900 dark:hover:text-white"
                         }`}
                       >
                         {themeFilter}
@@ -656,37 +723,57 @@ export default function PcDashboard() {
                 {/* Filters Row */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end bg-[#f8fafc] dark:bg-slate-900/40 p-4 rounded-xl">
                   <div className="md:col-span-4 space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Search</label>
+                    <label htmlFor="pc-reflections-search" className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Search</label>
                     <input
+                      id="pc-reflections-search"
                       type="text"
+                      value={reflectionSearch}
+                      onChange={(e) => setReflectionSearch(e.target.value)}
                       placeholder="Search by code or theme"
                       className="w-full px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/10 text-slate-800 dark:text-white focus:outline-none"
                     />
                   </div>
                   <div className="md:col-span-3 space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">From</label>
+                    <label htmlFor="pc-reflections-from" className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">From</label>
                     <input
+                      id="pc-reflections-from"
                       type="text"
-                      defaultValue="01 Jul 2026"
+                      value={fromDate}
+                      onChange={(e) => setFromDate(e.target.value)}
+                      placeholder="01 Jul 2026"
                       className="w-full px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/10 text-slate-800 dark:text-white focus:outline-none font-mono"
                     />
                   </div>
                   <div className="md:col-span-3 space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">To</label>
+                    <label htmlFor="pc-reflections-to" className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">To</label>
                     <input
+                      id="pc-reflections-to"
                       type="text"
-                      defaultValue="28 Jul 2026"
+                      value={toDate}
+                      onChange={(e) => setToDate(e.target.value)}
+                      placeholder="28 Jul 2026"
                       className="w-full px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/10 text-slate-800 dark:text-white focus:outline-none font-mono"
                     />
                   </div>
                   <div className="md:col-span-2">
                     <button
-                      onClick={() => triggerToast("Filtering reflection entries list")}
-                      className="w-full py-2 bg-slate-200 dark:bg-slate-800 hover:bg-[#0da2b3] hover:text-white text-slate-700 dark:text-white text-xs font-bold rounded-lg cursor-pointer transition"
+                      onClick={() => setFilterApplied(true)}
+                      className="w-full py-2 bg-slate-200 dark:bg-slate-800 hover:bg-[var(--brand-color)] hover:text-white text-slate-700 dark:text-white text-xs font-bold rounded-lg cursor-pointer transition"
                     >
                       Filter
                     </button>
                   </div>
+                </div>
+
+                {/* Filter status indicator */}
+                <div className="text-[10px] text-slate-500 font-mono pt-1">
+                  {(() => {
+                    const dateFiltered = filterApplied && (fromDate || toDate);
+                    const fromStr = fromDate || "\u2014";
+                    const toStr = toDate || "\u2014";
+                    const filtered = filterReflections(reflectionEntries);
+                    return `Showing ${filtered.length} entries${dateFiltered ? ` (filtered: ${fromStr} \u2192 ${toStr})` : ""}`;
+                  })()}
                 </div>
 
                 <div className="overflow-x-auto">
@@ -702,29 +789,22 @@ export default function PcDashboard() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { date: "27 Jul", code: "A-1042", theme: "Purpose", len: "312 words", preview: "“Finally sat with the question long enough to hear my own answer.”", flag: "Pastoral", col: "green" },
-                        { date: "26 Jul", code: "A-1356", theme: "Values", len: "184 words", preview: "“Wrote down the three things I won't trade. They held up.”", flag: "Pastoral", col: "green" },
-                        { date: "24 Jul", code: "A-1218", theme: "Grief", len: "421 words", preview: "“Not ready to talk about it. But I want a place to put the words.”", flag: "Tender", col: "green" },
-                        { date: "22 Jul", code: "A-1087", theme: "Transition", len: "256 words", preview: "“PCS in nine weeks. Trying to be present here, now.”", flag: "Pastoral", col: "green" },
-                        { date: "21 Jul", code: "A-1421", theme: "Meaning", len: "298 words", preview: "“The quiet still finds me, even on the good days.”", flag: "Pastoral", col: "green" },
-                        { date: "19 Jul", code: "A-1042", theme: "Gratitude", len: "147 words", preview: "“A long walk. Cold air. The first star I noticed all month.”", flag: "Pastoral", col: "green" }
-                      ].map((p, idx) => (
-                        <tr key={idx} className="hover:bg-slate-55/20 transition">
+                      {filterReflections(reflectionEntries).map((p, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/20 transition">
                           <td className="py-3 text-slate-500 font-mono">{p.date}</td>
                           <td className="py-3 font-bold text-slate-800 dark:text-white font-mono">{p.code}</td>
                           <td className="py-3">
                             <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                              p.theme === "Grief" ? "bg-sky-500/10 text-sky-600" : "bg-purple-500/10 text-purple-650"
+                              p.theme === "Grief" ? "bg-sky-500/10 text-sky-600" : "bg-purple-500/10 text-purple-600"
                             }`}>
                               {p.theme}
                             </span>
                           </td>
                           <td className="py-3 text-slate-500 font-mono text-[10px]">{p.len}</td>
-                          <td className="py-3 text-slate-700 dark:text-slate-350 italic font-serif leading-relaxed text-[11px]">{p.preview}</td>
+                          <td className="py-3 text-slate-700 dark:text-slate-300 italic font-serif leading-relaxed text-[11px]">{p.preview}</td>
                           <td className="py-3 text-right">
-                            <span className="inline-flex items-center gap-1 font-bold text-[9px] text-[#0da2b3] uppercase font-sans">
-                              <span className="size-1.5 rounded-full bg-[#0da2b3]"></span>
+                            <span className="inline-flex items-center gap-1 font-bold text-[9px] text-[var(--brand-color)] uppercase font-sans">
+                              <span className="size-1.5 rounded-full bg-[var(--brand-color)]"></span>
                               {p.flag}
                             </span>
                           </td>
@@ -741,40 +821,61 @@ export default function PcDashboard() {
                 {/* Pastoral note - A-1503 */}
                 <div className="lg:col-span-6 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white font-sans">Pastoral note - A-1503</h3>
-                    <p className="text-[10px] text-slate-455 mt-0.5">Privileged - visible only to you</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white font-sans">Pastoral note - A-1503</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Privileged - visible only to you</p>
                   </div>
 
                   <div className="pt-2 space-y-3">
-                    <textarea 
+                    <textarea
                       rows={4}
-                      defaultValue="First-time engagement. Airman arrived quiet, attentive. Asked about cadence (weekly) —"
-                      className="w-full p-3.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300 focus:outline-none focus:border-[#0da2b3]/50 leading-relaxed font-sans"
+                      value={pastoralNoteBody}
+                      onChange={(e) => setPastoralNoteBody(e.target.value)}
+                      className="w-full p-3.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300 focus:outline-none focus:border-[var(--brand-color)/50] leading-relaxed font-sans"
                     />
                     <div className="text-[9px] text-slate-400 font-medium">This note is privileged communication. Not for leadership review.</div>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-2">
-                    <button 
-                      onClick={() => triggerToast("Note draft saved")}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-white hover:bg-slate-55 dark:hover:bg-slate-800 transition cursor-pointer"
+                  <div className="flex items-center gap-3 pt-2 flex-wrap">
+                    <button
+                      onClick={() => {
+                        setPastoralDrafts({ body: pastoralNoteBody, savedAt: new Date().toISOString() });
+                        triggerToast("Note draft saved");
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-800 transition cursor-pointer"
                     >
                       Save draft
                     </button>
-                    <button 
-                      onClick={() => triggerToast("Confidential pastoral note saved to ledger")}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#0da2b3] hover:bg-[#0c8a99] text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                    <button
+                      onClick={() => {
+                        const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+                        setPastoralNotes([
+                          {
+                            airmanCode: "A-1503",
+                            date: today,
+                            body: pastoralNoteBody,
+                          },
+                          ...pastoralNotes,
+                        ]);
+                        setPastoralNoteBody("");
+                        triggerToast("Confidential pastoral note saved to ledger");
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
                     >
                       Save pastoral note
                     </button>
+                    {pastoralDrafts && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Last saved: {new Date(pastoralDrafts.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 {/* Records access log */}
                 <div className="lg:col-span-6 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white font-sans">Records access log</h3>
-                    <p className="text-[10px] text-slate-455 mt-0.5">Every read, write, and export is recorded. Audit only — never surfaced to leadership.</p>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white font-sans">Records access log</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Every read, write, and export is recorded. Audit only — never surfaced to leadership.</p>
                   </div>
 
                   <div className="overflow-x-auto pt-1">
@@ -793,16 +894,16 @@ export default function PcDashboard() {
                           { time: "28 Jul · 08:58", act: "Confirmed · opt-in", rec: "A-1503" },
                           { time: "27 Jul · 19:42", act: "Read · reflection", rec: "A-1218" }
                         ].map((logRow, idx) => (
-                          <tr key={idx} className="hover:bg-slate-55/20 transition">
+                          <tr key={idx} className="hover:bg-slate-50/20 transition">
                             <td className="py-3 text-slate-500">{logRow.time}</td>
-                            <td className="py-3 text-slate-700 dark:text-slate-350">{logRow.act}</td>
+                            <td className="py-3 text-slate-700 dark:text-slate-300">{logRow.act}</td>
                             <td className="py-3 font-bold text-slate-800 dark:text-white">{logRow.rec}</td>
                           </tr>
                         ))}
                         {/* Export row */}
-                        <tr className="hover:bg-slate-55/20 transition">
+                        <tr className="hover:bg-slate-50/20 transition">
                           <td className="py-3 text-slate-500">27 Jul · 11:20</td>
-                          <td className="py-3 text-slate-700 dark:text-slate-350">Exported</td>
+                          <td className="py-3 text-slate-700 dark:text-slate-300">Exported</td>
                           <td className="py-3">
                             <div className="flex items-center gap-1.5">
                               <span className="text-slate-400">never</span>
@@ -834,10 +935,14 @@ export default function PcDashboard() {
               {/* Header Section */}
               <div className="text-left">
                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">PURPOSE COACH · MESSAGES</p>
-                <h1 className="text-3xl font-extrabold tracking-tight text-slate-855 dark:text-white font-sans">Messages</h1>
-                <p className="text-xs text-slate-550 dark:text-slate-400 mt-1">
+                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">Messages</h1>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   One thread per airman. Private to the airman &mdash; not visible to leadership.
                 </p>
+                <span className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                  <Users className="size-3" />
+                  {POPULATION_LEVELS.CASELOAD}
+                </span>
               </div>
 
               {/* Chat pane grid split */}
@@ -846,9 +951,9 @@ export default function PcDashboard() {
                 {/* Threads Sidebar Panel */}
                 <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
-                    <h3 className="text-sm font-bold text-slate-855 dark:text-white">Threads</h3>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#0da2b3]/15 text-[#0da2b3] rounded-full text-[9px] font-bold uppercase font-mono">
-                      <span className="size-1 bg-[#0da2b3] rounded-full"></span>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Threads</h3>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--brand-color)/15] text-[var(--brand-color)] rounded-full text-[9px] font-bold uppercase font-mono">
+                      <span className="size-1 bg-[var(--brand-color)] rounded-full"></span>
                       3 unread
                     </span>
                   </div>
@@ -857,47 +962,49 @@ export default function PcDashboard() {
                     <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
                     <input
                       type="text"
+                      aria-label="Search by code"
                       placeholder="Search by code"
                       className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-[#f8fafc] dark:bg-[#070a13] border border-slate-200 dark:border-white/5 text-slate-800 dark:text-white focus:outline-none"
                     />
                   </div>
 
                   {/* Threads list */}
-                  <div className="divide-y divide-slate-150/40 dark:divide-white/5 overflow-y-auto max-h-96 pr-1 space-y-1">
+                  <div className="divide-y divide-slate-100/40 dark:divide-white/5 overflow-y-auto max-h-96 pr-1 space-y-1">
                     {[
                       { code: "A-1042", time: "26 Jul", txt: "Yes. Wednesday works. Same time?", unread: 2, active: true },
                       { code: "A-1087", time: "24 Jul", txt: "Booked Wed 14:00. I'll be there.", unread: 0, active: false },
                       { code: "A-1218", time: "22 Jul", txt: "Reading the passage you shared. Thank you.", unread: 1, active: false },
                       { code: "A-1356", time: "20 Jul", txt: "Weekly reflections sent &mdash; thank you.", unread: 0, active: false }
                     ].map((thread, idx) => (
-                      <div 
-                        key={idx} 
-                        onClick={() => triggerToast(`Opened message history with: ${thread.code}`)}
-                        className={`py-3.5 px-3 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition ${
-                          thread.active 
-                            ? "bg-[#0da2b3]/10" 
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setViewingThread(thread)}
+                        className={`w-full py-3.5 px-3 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition ${
+                          thread.active
+                            ? "bg-[var(--brand-color)/10]"
                             : "hover:bg-[#f8fafc] dark:hover:bg-slate-900/60"
                         }`}
                       >
                         <div className="flex items-center gap-3">
-                          <div className="size-8 rounded-full bg-[#0da2b3]/10 text-[#0da2b3] font-bold text-xs flex items-center justify-center font-mono select-none">
+                          <div className="size-8 rounded-full bg-[var(--brand-color)/10] text-[var(--brand-color)] font-bold text-xs flex items-center justify-center font-mono select-none">
                             A1
                           </div>
                           <div className="space-y-0.5 text-left">
                             <span className="text-xs font-bold text-slate-800 dark:text-white font-mono block">{thread.code}</span>
-                            <p className="text-[10px] text-slate-455 leading-tight truncate w-36" dangerouslySetInnerHTML={{ __html: thread.txt }}></p>
+                            <p className="text-[10px] text-slate-500 leading-tight truncate w-36" dangerouslySetInnerHTML={{ __html: thread.txt }}></p>
                           </div>
                         </div>
 
                         <div className="text-right flex flex-col items-end gap-1.5">
                           <span className="text-[9px] font-mono text-slate-400">{thread.time}</span>
                           {thread.unread > 0 && (
-                            <span className="size-4.5 rounded-full bg-[#0da2b3] text-white text-[9px] font-bold font-mono flex items-center justify-center">
+                            <span className="size-4.5 rounded-full bg-[var(--brand-color)] text-white text-[9px] font-bold font-mono flex items-center justify-center">
                               {thread.unread}
                             </span>
                           )}
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -908,7 +1015,7 @@ export default function PcDashboard() {
                   {/* Chat header */}
                   <div className="flex items-center justify-between border-b border-slate-200/60 dark:border-white/5 pb-4 flex-shrink-0">
                     <div className="flex items-center gap-3">
-                      <div className="size-9 rounded-full bg-[#0da2b3]/10 text-[#0da2b3] font-bold text-xs flex items-center justify-center font-mono">
+                      <div className="size-9 rounded-full bg-[var(--brand-color)/10] text-[var(--brand-color)] font-bold text-xs flex items-center justify-center font-mono">
                         A1
                       </div>
                       <div className="text-left space-y-0.5">
@@ -917,7 +1024,7 @@ export default function PcDashboard() {
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-900 border border-slate-250 dark:border-white/10 text-[9px] font-bold rounded-full uppercase tracking-wider text-slate-500 font-mono">
+                    <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-[9px] font-bold rounded-full uppercase tracking-wider text-slate-500 font-mono">
                       Confidential
                     </span>
                   </div>
@@ -941,7 +1048,7 @@ export default function PcDashboard() {
                           <div className={`flex w-full ${msg.sender === "coach" ? "justify-end" : "justify-start"} text-left`}>
                             <div className={`max-w-md p-3.5 rounded-2xl relative shadow-sm ${
                               msg.sender === "coach" 
-                                ? "bg-[#0da2b3] text-white rounded-br-none" 
+                                ? "bg-[var(--brand-color)] text-white rounded-br-none" 
                                 : "bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 text-slate-800 dark:text-slate-200 rounded-bl-none"
                             }`}>
                               <p className="text-xs leading-relaxed font-sans">{msg.text}</p>
@@ -967,6 +1074,7 @@ export default function PcDashboard() {
                   <div className="border-t border-slate-200/60 dark:border-white/5 pt-4 flex-shrink-0 flex items-center gap-3">
                     <input
                       type="text"
+                      aria-label="Message A-1042"
                       placeholder="Message A-1042"
                       value={chatMessage}
                       onChange={(e) => setChatMessage(e.target.value)}
@@ -975,7 +1083,7 @@ export default function PcDashboard() {
                     />
                     <button 
                       onClick={handleSendMessage}
-                      className="px-4 py-2 bg-[#0da2b3] hover:bg-[#0c8a99] text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                      className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5"
                     >
                       Send
                     </button>
@@ -996,6 +1104,20 @@ export default function PcDashboard() {
         </main>
       </div>
 
+      {viewingThread && (
+        <RecordDetailDialog
+          open={!!viewingThread}
+          onClose={() => setViewingThread(null)}
+          title={viewingThread.code}
+          subtitle={viewingThread.txt}
+          fields={[
+            { label: "Last activity", value: viewingThread.time },
+            { label: "Unread", value: viewingThread.unread },
+            { label: "Status", value: viewingThread.active ? "Active thread" : "Inactive" },
+          ]}
+        />
+      )}
+
       {/* TOAST NOTIFICATION */}
       {showConfirmToast && (
         <div className="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 z-50 animate-slide-up border border-slate-800 dark:border-white/5 font-sans">
@@ -1003,6 +1125,52 @@ export default function PcDashboard() {
           <span className="text-xs font-semibold">{toastMessage}</span>
         </div>
       )}
+
+      <CreateRecordModal
+        open={showNewPastoralNoteModal}
+        onClose={() => setShowNewPastoralNoteModal(false)}
+        title="New pastoral note"
+        subtitle="Privileged · visible only to you. Not for leadership review."
+        submitLabel="Save draft"
+        fields={[
+          { name: "AirmanCode", label: "Airman code", type: "text", required: true, placeholder: "e.g. A-1503" },
+          { name: "Date", label: "Date", type: "date", required: true, defaultValue: new Date().toISOString().slice(0, 10) },
+          { name: "Body", label: "Note body", type: "textarea", required: true, placeholder: "Observation · context · next step" }
+        ]}
+        onSubmit={(values) => {
+          const newNote: PastoralNote = {
+            airmanCode: values.AirmanCode || "A-????",
+            date: values.Date || new Date().toISOString().slice(0, 10),
+            body: values.Body || "",
+          };
+          setPastoralNotes([newNote, ...pastoralNotes]);
+          setShowNewPastoralNoteModal(false);
+          triggerToast(`Created: ${newNote.airmanCode}`);
+        }}
+      />
+
+      <CreateRecordModal
+        open={showReachOutModal}
+        onClose={() => setShowReachOutModal(false)}
+        title="Reach out"
+        subtitle="Compose an initial chaplain outreach. Private channel."
+        submitLabel="Start outreach"
+        fields={[
+          { name: "AirmanCode", label: "Airman code", type: "text", required: true, placeholder: "e.g. A-1503" },
+          { name: "Topic", label: "Topic", type: "select", required: true, options: ["Check-in", "Follow-up", "Spiritual care", "Crisis support"] },
+          { name: "Preview", label: "Preview", type: "textarea", required: true, placeholder: "Brief opening · intent · timing" }
+        ]}
+        onSubmit={(values) => {
+          const newReachOut: ReachOut = {
+            airmanCode: values.AirmanCode || "A-????",
+            topic: values.Topic || "Check-in",
+            preview: values.Preview || "",
+          };
+          setReachOuts([newReachOut, ...reachOuts]);
+          setShowReachOutModal(false);
+          triggerToast(`Created: ${newReachOut.airmanCode}`);
+        }}
+      />
 
     </div>
   );

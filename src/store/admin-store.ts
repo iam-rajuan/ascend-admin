@@ -58,7 +58,7 @@ export type DeviceOverrideItem = {
   log: string;
 };
 
-type AdminStore = {
+export type AdminStore = {
   activeTab: AdminTab;
   pendingConfirmations: ConfirmationItem[];
   recentActivity: ActivityItem[];
@@ -89,6 +89,7 @@ type AdminStore = {
   toggleServiceStatus: (id: string) => void;
   toggleRbacCell: (rowIndex: number, colIndex: number) => void;
   updateRoleCount: (roleId: string, value: string) => void;
+  addActivity: (entry: { action: string; actor: string; reason?: string; scope: string; tag?: ActivityItem["tag"]; tagColor?: ActivityItem["tagColor"] }) => void;
 };
 
 const getInitialAdminTab = (): AdminTab => {
@@ -248,4 +249,20 @@ export const useAdminStore = create<AdminStore>((set) => ({
         r.id === roleId ? { ...r, assigned: value } : r
       ),
     })),
+  addActivity: (entry) =>
+    set((state) => {
+      const newEntry: ActivityItem = {
+        id: `act-${Date.now()}`,
+        time: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+        actor: entry.actor,
+        action: entry.action,
+        reason: entry.reason,
+        scope: entry.scope,
+        tag: entry.tag ?? "logged",
+        tagColor: entry.tagColor ?? "green",
+      };
+      return {
+        recentActivity: [newEntry, ...state.recentActivity],
+      };
+    }),
 }));

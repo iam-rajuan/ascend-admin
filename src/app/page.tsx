@@ -1,39 +1,41 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type SubmitEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Shield,
-  User,
+  Mail,
   Moon,
   Sun,
   Clock,
   Lock,
+  KeyRound,
   Loader2,
 } from "lucide-react";
 import { AscendLogo } from "@/components/ascend-logo";
 import { AscendBanner } from "@/components/ascend-banner";
 import { useAuthStore } from "@/store/auth-store";
+import { useUsersStore } from "@/store/users-store";
 
 export default function Home() {
   const router = useRouter();
-  const { isAuthenticated, selectedRole, login } = useAuthStore();
+  const { isAuthenticated, currentUserRole, login } = useAuthStore();
+  const verifyCredentials = useUsersStore((state) => state.verifyCredentials);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authStep, setAuthStep] = useState(0);
-  const [authMethod, setAuthMethod] = useState<"CAC" | "SSO">("CAC");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [authError, setAuthError] = useState("");
 
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      if (selectedRole) {
-        const route = selectedRole.toLowerCase().replace("/", "-");
-        router.push(`/dashboard/${route}`);
-      } else {
-        router.push("/roles");
-      }
+      router.push(currentUserRole ? `/dashboard/${currentUserRole}` : "/roles");
     }
-  }, [isAuthenticated, selectedRole, router]);
+  }, [isAuthenticated, currentUserRole, router]);
 
   // Sync theme with document class list
   useEffect(() => {
@@ -61,8 +63,26 @@ export default function Home() {
     document.documentElement.classList.toggle("dark", newTheme === "dark");
   };
 
-  const handleSignIn = (method: "CAC" | "SSO") => {
-    setAuthMethod(method);
+  const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
+  const handleSignIn = (e: SubmitEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    let hasError = false;
+    if (!isValidEmail(email)) {
+      setEmailError("Enter the email address assigned to your account.");
+      hasError = true;
+    } else {
+      setEmailError("");
+    }
+    if (!password) {
+      setPasswordError("Enter your password.");
+      hasError = true;
+    } else {
+      setPasswordError("");
+    }
+    if (hasError) return;
+
+    setAuthError("");
     setIsAuthenticating(true);
     setAuthStep(0);
 
@@ -71,9 +91,20 @@ export default function Home() {
     const timer2 = setTimeout(() => setAuthStep(2), 1000);
     const timer3 = setTimeout(() => setAuthStep(3), 1500);
     const timer4 = setTimeout(() => {
-      login();
+      const result = verifyCredentials(email, password);
+      if (result === "invalid") {
+        setIsAuthenticating(false);
+        setAuthError("Incorrect email or password.");
+        return;
+      }
+      if (result === "deactivated") {
+        setIsAuthenticating(false);
+        setAuthError("This account has been deactivated — contact your administrator.");
+        return;
+      }
+      login(result);
       setIsAuthenticating(false);
-      router.push("/roles");
+      router.push(`/dashboard/${result.role}`);
     }, 2000);
 
     return () => {
@@ -86,37 +117,36 @@ export default function Home() {
 
   // Secure Auth logs for simulated scanning
   const getAuthLogs = () => {
-    const methodStr = authMethod === "CAC" ? "CAC / PIV Card" : "Unit SSO Token";
     switch (authStep) {
       case 0:
         return [
-          `[INIT] Requesting tunnel authentication via ${methodStr}...`,
+          `[INIT] Requesting session for ${email}...`,
           `[CONN] Handshaking with secure government gateway...`,
         ];
       case 1:
         return [
-          `[INIT] Requesting tunnel authentication via ${methodStr}...`,
+          `[INIT] Requesting session for ${email}...`,
           `[CONN] Handshaking with secure government gateway...`,
-          `[AUTH] Accessing local security certificates...`,
-          `[AUTH] Reading cryptographic signatures...`,
+          `[AUTH] Verifying email against assigned account directory...`,
+          `[AUTH] Confirming role assignment...`,
         ];
       case 2:
         return [
-          `[INIT] Requesting tunnel authentication via ${methodStr}...`,
+          `[INIT] Requesting session for ${email}...`,
           `[CONN] Handshaking with secure government gateway...`,
-          `[AUTH] Accessing local security certificates...`,
-          `[AUTH] Reading cryptographic signatures...`,
-          `[VERI] Signature verified. Running compliance checks...`,
+          `[AUTH] Verifying email against assigned account directory...`,
+          `[AUTH] Confirming role assignment...`,
+          `[VERI] Account verified. Running compliance checks...`,
           `[SECURE] Establishing secure session context (AES-256)...`,
         ];
       case 3:
       default:
         return [
-          `[INIT] Requesting tunnel authentication via ${methodStr}...`,
+          `[INIT] Requesting session for ${email}...`,
           `[CONN] Handshaking with secure government gateway...`,
-          `[AUTH] Accessing local security certificates...`,
-          `[AUTH] Reading cryptographic signatures...`,
-          `[VERI] Signature verified. Running compliance checks...`,
+          `[AUTH] Verifying email against assigned account directory...`,
+          `[AUTH] Confirming role assignment...`,
+          `[VERI] Account verified. Running compliance checks...`,
           `[SECURE] Establishing secure session context (AES-256)...`,
           `[OK] Authentication successful! Loading workspace...`,
         ];
@@ -166,7 +196,7 @@ export default function Home() {
       {/* 2. CUI / OPSEC NAVY BANNER */}
       <section className="flex h-9 w-full items-center justify-center bg-[#101b22] px-6 text-center text-[10px] font-semibold tracking-wider text-slate-400 select-none flex-shrink-0 z-10">
         <div className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-[#0da2b3]"></span>
+          <span className="size-1.5 rounded-full bg-[var(--brand-color)]"></span>
           <span>CUI // OPSEC · Not a Government System of Record</span>
         </div>
       </section>
@@ -194,7 +224,7 @@ export default function Home() {
               /* Simulated Handshake Scanner view */
               <div className="rounded-2xl border border-border bg-surface p-6 shadow-xl dark:shadow-2xl/10 animate-fade-in">
                 <div className="flex items-center gap-4 mb-5">
-                  <div className="flex size-12 items-center justify-center rounded-xl bg-[#0da2b3]/10 text-[#0da2b3]">
+                  <div className="flex size-12 items-center justify-center rounded-xl bg-[var(--brand-color)/10] text-[var(--brand-color)]">
                     <Loader2 className="size-6 animate-spin" />
                   </div>
                   <div>
@@ -206,13 +236,13 @@ export default function Home() {
                 {/* Progress bar */}
                 <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
                   <div
-                    className="h-full bg-gradient-to-r from-[#0da2b3] to-[#e2b13c] transition-all duration-500 ease-out"
+                    className="h-full bg-gradient-to-r from-[var(--brand-color)] to-[#e2b13c] transition-all duration-500 ease-out"
                     style={{ width: `${(authStep + 1) * 25}%` }}
                   />
                 </div>
 
                 {/* Tactical Terminal logs */}
-                <div className="rounded-xl border border-border/80 bg-slate-950 p-4 font-mono text-[10px] leading-relaxed text-[#0da2b3]">
+                <div className="rounded-xl border border-border/80 bg-slate-950 p-4 font-mono text-[10px] leading-relaxed text-[var(--brand-color)]">
                   <div className="flex flex-col gap-1">
                     {getAuthLogs().map((log, idx) => (
                       <div key={idx} className="animate-fade-in">
@@ -234,49 +264,91 @@ export default function Home() {
                     Sign in
                   </h2>
                   <p className="mt-4 text-sm leading-relaxed text-muted">
-                    Use your assigned identity provider. First-use continues into 20 onboarding questions, then drops you into your workspace.
+                    Sign in with your assigned email address. First-use continues into 20 onboarding questions, then drops you into your workspace.
                   </p>
                 </div>
 
-                {/* CAC/PIV Login Button */}
-                <div className="flex flex-col gap-3 pt-4">
-                  <button
-                    onClick={() => handleSignIn("CAC")}
-                    className="group flex w-full items-center justify-between rounded-xl border border-border bg-surface px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:bg-surface-muted hover:shadow-md cursor-pointer"
-                    type="button"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-background border dark:border-border text-foreground group-hover:scale-105 transition-transform duration-200">
-                        <Shield className="size-5 text-foreground" />
-                      </div>
-                      <span className="text-sm font-bold text-foreground">Continue with CAC / PIV</span>
+                {/* Email Sign-In Form */}
+                <form onSubmit={handleSignIn} noValidate className="flex flex-col gap-3 pt-4">
+                  <div>
+                    <label htmlFor="email" className="mb-1.5 block text-xs font-semibold text-foreground">
+                      Email address
+                    </label>
+                    <div className="relative">
+                      <Mail className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                      <input
+                        id="email"
+                        type="email"
+                        autoComplete="email"
+                        value={email}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          if (emailError) setEmailError("");
+                        }}
+                        placeholder="name@ascend.mil"
+                        className="w-full rounded-xl border border-border bg-surface py-3.5 pl-10 pr-4 text-sm text-foreground shadow-sm placeholder:text-muted/60 focus:outline-none focus:border-[var(--brand-color)] focus:ring-2 focus:ring-[var(--brand-color)]/20 transition-all duration-150"
+                      />
                     </div>
-                  </button>
+                    {emailError && (
+                      <p className="mt-1.5 text-xs font-medium text-rose-500">{emailError}</p>
+                    )}
+                  </div>
 
-                  {/* SSO Login Button */}
-                  <button
-                    onClick={() => handleSignIn("SSO")}
-                    className="group flex w-full items-center justify-between rounded-xl border border-border bg-surface px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:bg-surface-muted hover:shadow-md cursor-pointer"
-                    type="button"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-background border dark:border-border text-foreground group-hover:scale-105 transition-transform duration-200">
-                        <User className="size-5 text-foreground" />
-                      </div>
-                      <span className="text-sm font-bold text-foreground">Continue with Unit SSO</span>
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <label htmlFor="password" className="block text-xs font-semibold text-foreground">
+                        Password
+                      </label>
+                      <Link
+                        href="/forgot-password"
+                        className="text-xs font-semibold text-[var(--brand-color)] hover:text-[var(--brand-color-hover)] transition-colors duration-150"
+                      >
+                        Forgot password?
+                      </Link>
                     </div>
+                    <div className="relative">
+                      <KeyRound className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                      <input
+                        id="password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => {
+                          setPassword(e.target.value);
+                          if (passwordError) setPasswordError("");
+                        }}
+                        placeholder="••••••••"
+                        className="w-full rounded-xl border border-border bg-surface py-3.5 pl-10 pr-4 text-sm text-foreground shadow-sm placeholder:text-muted/60 focus:outline-none focus:border-[var(--brand-color)] focus:ring-2 focus:ring-[var(--brand-color)]/20 transition-all duration-150"
+                      />
+                    </div>
+                    {passwordError && (
+                      <p className="mt-1.5 text-xs font-medium text-rose-500">{passwordError}</p>
+                    )}
+                  </div>
+
+                  {authError && (
+                    <p className="rounded-lg border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/20 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400">
+                      {authError}
+                    </p>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="group flex w-full items-center justify-center rounded-xl bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] px-5 py-3.5 text-sm font-bold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md cursor-pointer"
+                  >
+                    Sign in
                   </button>
-                </div>
+                </form>
 
                 {/* Last Used Badge Widget */}
-                <div className="mt-8 rounded-xl border border-[#0da2b3]/20 bg-[#0da2b3]/5 p-4">
+                <div className="mt-8 rounded-xl border border-[var(--brand-color)]/20 bg-[var(--brand-color)]/5 p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex mt-0.5 size-5 items-center justify-center rounded-full bg-[#0da2b3]/10 text-[#0da2b3]">
+                    <div className="flex mt-0.5 size-5 items-center justify-center rounded-full bg-[var(--brand-color)/10] text-[var(--brand-color)]">
                       <Clock className="size-3.5" />
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-foreground">Last used · CAC / PIV</span>
+                        <span className="text-xs font-bold text-foreground">Last used · Email sign-in</span>
                         {/* Live blinking green active light */}
                         <span className="relative flex size-2">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -307,7 +379,7 @@ export default function Home() {
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none opacity-40" />
 
           {/* Soft ambient lighting effect in center */}
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-[#0da2b3]/15 blur-[80px] pointer-events-none" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-[var(--brand-color)]/15 blur-[80px] pointer-events-none" />
 
           {/* Top Branding Banner */}
           <div className="relative z-10 flex justify-center">

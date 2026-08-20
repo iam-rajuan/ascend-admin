@@ -43,7 +43,7 @@ export function AscendLogo({
       {/* The Stylized "A" */}
       <path
         d="M 32 70 L 48 26 H 54 L 68 70 H 58 L 54.5 58 H 45.5 L 42 70 Z M 50 36 L 46 48 H 54 Z"
-        fill="#0da2b3"
+        fill="var(--brand-color)"
         fillRule="evenodd"
         clipRule="evenodd"
       />
@@ -53,21 +53,21 @@ export function AscendLogo({
         <>
           <path
             d="M 36 78 L 44 70"
-            stroke="#0da2b3"
+            stroke="var(--brand-color)"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeOpacity="0.8"
           />
           <path
             d="M 42 81 L 52 71"
-            stroke="#0da2b3"
+            stroke="var(--brand-color)"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeOpacity="0.8"
           />
           <path
             d="M 48 84 L 60 72"
-            stroke="#0da2b3"
+            stroke="var(--brand-color)"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeOpacity="0.8"

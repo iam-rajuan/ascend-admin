@@ -17,6 +17,13 @@
   --success: #15803d;
   --danger: #dc2626;
   --shadow: 0 24px 80px rgba(15, 23, 42, 0.04);
+  --brand-color: #0da2b3;
+  /* Must always be defined statically here — some pages only set this via
+     the initBrandColor() JS helper (src/lib/constants.ts), and pages that
+     never call it left hover:bg-[var(--brand-color-hover)] resolving to
+     nothing, dropping the hover background to transparent while text
+     (often explicit white) stayed put — i.e. invisible text on hover. */
+  --brand-color-hover: #0c8a99;
 }
 
 .dark {
