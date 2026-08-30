@@ -13,7 +13,7 @@ import { LogOut, ShieldAlert } from "lucide-react";
 // role could be resolved for the account.
 export default function RolesPage() {
   const router = useRouter();
-  const { isAuthenticated, currentUserRole, logout } = useAuthStore();
+  const { isAuthenticated, currentUserRole, logout, isHydrated, isLoading } = useAuthStore();
   const [hasMounted, setHasMounted] = useState(false);
 
   useEffect(() => {
@@ -22,21 +22,22 @@ export default function RolesPage() {
 
   useEffect(() => {
     if (!hasMounted) return;
+    if (!isHydrated || isLoading) return;
     if (!isAuthenticated) {
-      router.push("/");
+      router.replace("/");
       return;
     }
     if (currentUserRole) {
-      router.push(`/dashboard/${currentUserRole}`);
+      router.replace(`/dashboard/${currentUserRole}`);
     }
-  }, [hasMounted, isAuthenticated, currentUserRole, router]);
+  }, [currentUserRole, hasMounted, isAuthenticated, isHydrated, isLoading, router]);
 
   const handleLogout = () => {
     logout();
     router.push("/");
   };
 
-  if (!hasMounted || !isAuthenticated) {
+  if (!hasMounted || !isHydrated || isLoading || !isAuthenticated) {
     return null;
   }
 

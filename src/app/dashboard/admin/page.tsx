@@ -4,6 +4,21 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import {
+  approveAdminDeactivationRequest,
+  approveAdminPathway,
+  createAdminScheduledExport,
+  createAdminQuestionBankVersion,
+  formatAdminApiError,
+  getAdminDeactivationRequests,
+  rejectAdminConfirmation,
+  rejectAdminDeactivationRequest,
+  retireAdminQuestionBankVersion,
+  searchAdminExportLog,
+  setAdminExportLifecycleStatus,
+  updateAdminScheduledExport,
+  enableAdminPathway,
+} from "@/lib/admin-api";
+import {
   useAdminStore,
   AdminStore,
   AdminTab,
@@ -58,10 +73,127 @@ import {
   UserCheck,
 } from "lucide-react";
 
+function formatAdminDate(value: string | null | undefined, withTime = false) {
+  if (!value) {
+    return "—";
+  }
+
+  return new Date(value).toLocaleString("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: withTime ? undefined : "numeric",
+    hour: withTime ? "2-digit" : undefined,
+    minute: withTime ? "2-digit" : undefined,
+  });
+}
+
+function formatCompactDate(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+
+  return new Date(value).toLocaleDateString("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return "—";
+  }
+
+  return `${value.toFixed(1)}%`;
+}
+
+function formatTitle(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getInitials(value: string | null | undefined) {
+  if (!value) {
+    return "NA";
+  }
+
+  const parts = value
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (parts.length === 0) {
+    return "NA";
+  }
+
+  return parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
+}
+
+function formatQuestionRows(
+  rows: Array<{ id: string; readiness_component: string; routing: string; direction: string }>,
+) {
+  return rows.map((row) => ({
+    id: row.id,
+    driver: row.readiness_component.replace(" Readiness", ""),
+    direction: row.direction,
+    routing: row.routing,
+    validation: "Valid",
+    highlight: row.id === "W5" || row.id === "M5",
+  }));
+}
+
+function cadenceToApiValue(value: string) {
+  if (value.toLowerCase().includes("quarter")) return "quarterly";
+  if (value.toLowerCase().includes("annual")) return "annual";
+  if (value.toLowerCase().includes("month")) return "monthly";
+  return "weekly";
+}
+
+function cadenceToLabel(value: string) {
+  switch (value) {
+    case "weekly":
+      return "Weekly";
+    case "monthly":
+      return "Monthly";
+    case "quarterly":
+      return "Quarterly";
+    case "annual":
+      return "Annual";
+    default:
+      return value;
+  }
+}
+
+function formatToApiValue(value: string) {
+  return value.toLowerCase().includes("csv") ? "csv" : "pdf";
+}
+
+function formatToLabel(value: string) {
+  return value.toUpperCase();
+}
+
+function inferReportType(scope: string) {
+  const normalized = scope.trim().toLowerCase();
+  if (normalized.includes("handoff")) return "idmt_handoff_summary";
+  if (normalized.includes("caseload")) return "injury";
+  if (normalized.includes("util")) return "utilization";
+  if (normalized.includes("annual")) return "annual_wing_readiness";
+  return "wing_weekly_ops";
+}
+
 export default function AdminDashboardPage() {
   const router = useRouter();
-  const { isAuthenticated, logout } = useAuthStore();
+  const { isAuthenticated, isHydrated, accessToken, logout } = useAuthStore();
   const adminStore = useAdminStore();
+  const initializeAdmin = useAdminStore((state) => state.initialize);
+  const approveConfirmation = useAdminStore((state) => state.approveConfirmation);
+  const fetchPeople = useUsersStore((state) => state.fetchPeople);
   const { theme, toggleTheme } = useTheme();
   const currentUser = useCurrentUser();
   const { show: showConfirmToast, message: toastMessage, triggerToast } = useToast();
@@ -69,6 +201,7 @@ export default function AdminDashboardPage() {
 
   // Local state for modals and changes
   const [activeReviewItem, setActiveReviewItem] = useState<ConfirmationItem | null>(null);
+  const [reviewRejectReason, setReviewRejectReason] = useState("");
   const [scopeChanged, setScopeChanged] = useState(false);
 
   useEffect(() => {
@@ -77,17 +210,26 @@ export default function AdminDashboardPage() {
 
   // Protect the route
   useEffect(() => {
-    if (hasMounted && !isAuthenticated) {
+    if (hasMounted && isHydrated && !isAuthenticated) {
       router.push("/");
     }
-  }, [isAuthenticated, hasMounted, router]);
+  }, [isAuthenticated, hasMounted, isHydrated, router]);
+
+  useEffect(() => {
+    if (!hasMounted || !isHydrated || !accessToken) {
+      return;
+    }
+
+    void initializeAdmin(accessToken);
+    void fetchPeople(accessToken);
+  }, [accessToken, fetchPeople, hasMounted, initializeAdmin, isHydrated]);
 
   const handleLogout = () => {
     logout();
     router.push("/");
   };
 
-  if (!hasMounted || !isAuthenticated) return null;
+  if (!hasMounted || !isHydrated || !isAuthenticated) return null;
 
   return (
     <div className="flex h-screen w-screen bg-[#f0f4f9] dark:bg-[#070a13] text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200 overflow-hidden">
@@ -290,7 +432,10 @@ export default function AdminDashboardPage() {
       {activeReviewItem && (
         <AccessibleDialog
           open={!!activeReviewItem}
-          onClose={() => setActiveReviewItem(null)}
+          onClose={() => {
+            setActiveReviewItem(null);
+            setReviewRejectReason("");
+          }}
           titleId="review-pending-request-title"
         >
           <div className="flex items-start gap-4">
@@ -334,17 +479,72 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
+            <div className="pt-2">
+              <label htmlFor="review-reject-reason" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                Rejection reason
+              </label>
+              <textarea
+                id="review-reject-reason"
+                value={reviewRejectReason}
+                onChange={(e) => setReviewRejectReason(e.target.value)}
+                rows={3}
+                placeholder="Required only when rejecting this request."
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900 px-3 py-2 text-xs text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+              />
+            </div>
+
             <div className="flex gap-3 pt-2">
               <button
-                onClick={() => setActiveReviewItem(null)}
+                onClick={() => {
+                  setActiveReviewItem(null);
+                  setReviewRejectReason("");
+                }}
                 className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  adminStore.removeConfirmation(activeReviewItem.id);
+                onClick={async () => {
+                  if (!accessToken) {
+                    triggerToast("Your session expired. Please sign in again.");
+                    return;
+                  }
+
+                  if (!reviewRejectReason.trim()) {
+                    triggerToast("Enter a rejection reason before rejecting this request.");
+                    return;
+                  }
+
+                  try {
+                    await rejectAdminConfirmation(accessToken, activeReviewItem.id, reviewRejectReason.trim());
+                    await initializeAdmin(accessToken);
+                    setActiveReviewItem(null);
+                    setReviewRejectReason("");
+                    triggerToast(`${activeReviewItem.action} request rejected.`);
+                  } catch (error) {
+                    triggerToast(formatAdminApiError(error));
+                  }
+                }}
+                className="flex-1 py-2 px-4 border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:border-rose-950/30 dark:bg-rose-950/10 dark:text-rose-300 rounded-xl text-xs font-semibold shadow-sm transition cursor-pointer"
+              >
+                Reject
+              </button>
+              <button
+                onClick={async () => {
+                  if (!accessToken) {
+                    triggerToast("Your session expired. Please sign in again.");
+                    return;
+                  }
+
+                  const result = await approveConfirmation(accessToken, activeReviewItem.id);
+                  if (!result.ok) {
+                    triggerToast(result.error || "Unable to approve this request.");
+                    return;
+                  }
+
+                  await initializeAdmin(accessToken);
                   setActiveReviewItem(null);
+                  setReviewRejectReason("");
                   triggerToast(`${activeReviewItem.action} request approved successfully.`);
                 }}
                 className="flex-1 py-2 px-4 bg-[var(--brand-color)] hover:bg-[var(--brand-color)/95] text-white rounded-xl text-xs font-semibold shadow-sm transition cursor-pointer"
@@ -425,6 +625,12 @@ function OverviewView({
   adminStore: AdminStore;
   setActiveReviewItem: (item: ConfirmationItem | null) => void;
 }) {
+  const auditStats = adminStore.auditStats;
+  const systemOverview = adminStore.systemOverview;
+  const roleCount = adminStore.roleCatalogRaw.length;
+  const exportPendingCount = adminStore.pendingConfirmations.filter((c: ConfirmationItem) => c.action === "Export").length;
+  const deactivationPendingCount = adminStore.pendingConfirmations.filter((c: ConfirmationItem) => c.action === "Deactivation").length;
+
   return (
     <div className="space-y-8 animate-fade-in">
       
@@ -550,8 +756,8 @@ function OverviewView({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
           title="Audit entries - 24h"
-          value="2,184"
-          subtext="+12% vs 7-day avg"
+          value={(auditStats?.count_24h ?? 0).toString()}
+          subtext={`${auditStats?.percent_vs_7d_avg ?? 0}% vs 7d avg`}
           subtextStyle="text-emerald-500"
         />
         <MetricCard
@@ -563,13 +769,13 @@ function OverviewView({
         />
         <MetricCard
           title="Roles configured"
-          value="10"
-          subtext="last edit · 22 Jul · Lead Admin"
+          value={roleCount.toString()}
+          subtext={`${adminStore.scopeConfigs.length} scope configs live`}
         />
         <MetricCard
           title="System health"
-          value="99.98%"
-          subtext="Healthy · 30d"
+          value={formatPercent(systemOverview?.system_health.percentage)}
+          subtext={`${systemOverview?.system_health.label ?? "Unknown"} · ${systemOverview?.system_health.window_days ?? 0}d`}
           subtextStyle="text-emerald-500"
         />
       </div>
@@ -586,7 +792,7 @@ function OverviewView({
             code="PR-W-300.A"
             title="Roles & RBAC"
             desc="Role catalog, scope matrix, and permission toggles."
-            badge="10 roles"
+            badge={`${roleCount} roles`}
             badgeColor="teal"
             onClick={() => adminStore.setActiveTab("roles")}
           />
@@ -594,7 +800,7 @@ function OverviewView({
             code="PR-W-300.B"
             title="Scope matrix"
             desc="Role visibility, driver scope, and cohort minimums."
-            badge="10 + 5"
+            badge={`${adminStore.scopeMatrix.length} + ${adminStore.scopeConfigs.length}`}
             badgeColor="teal"
             onClick={() => adminStore.setActiveTab("scope")}
           />
@@ -602,7 +808,7 @@ function OverviewView({
             code="PR-W-300.C"
             title="Audit log"
             desc="Every login, access, export, configuration change, and deactivation."
-            badge="2,184 / 24h"
+            badge={`${auditStats?.count_24h ?? 0} / 24h`}
             badgeColor="yellow"
             onClick={() => adminStore.setActiveTab("audit-log")}
           />
@@ -618,7 +824,7 @@ function OverviewView({
             code="PR-W-300.E"
             title="System"
             desc="Uptime, services, scoring config, thresholds, and queues."
-            badge="7 sub-modules"
+            badge={`${adminStore.services.length} services`}
             badgeColor="teal"
             onClick={() => adminStore.setActiveTab("system")}
           />
@@ -626,7 +832,7 @@ function OverviewView({
             code="PR-W-300.F"
             title="Reversibility"
             desc="Every destructive action is paired with confirmation and recovery history."
-            badge="all reversible"
+            badge={`${deactivationPendingCount + exportPendingCount} reviewable`}
             badgeColor="green"
             onClick={() => adminStore.setActiveTab("audit-log")}
           />
@@ -718,6 +924,7 @@ function RolesView({
   const [rbacChanged, setRbacChanged] = useState(false);
   const [outcomesPage, setOutcomesPage] = useState(1);
   const [lastDeployAt, setLastDeployAt] = useState<string | null>(null);
+  const accessToken = useAuthStore((state) => state.accessToken);
 
   // People directory (real per-person accounts, distinct from the static
   // role-category catalog below).
@@ -727,7 +934,19 @@ function RolesView({
   const [peopleFilter, setPeopleFilter] = useState<RoleId | "All">("All");
   const [personModal, setPersonModal] = useState<{ mode: "add" | "edit"; person?: Person } | null>(null);
   const [viewingPerson, setViewingPerson] = useState<Person | null>(null);
-  const [resetResult, setResetResult] = useState<{ person: Person; tempPassword: string } | null>(null);
+  const [resetResult, setResetResult] = useState<{ person: Person; emailed: boolean } | null>(null);
+  const questionRegistry = adminStore.questionRegistry;
+  const currentOutcomes = formatQuestionRows(
+    (questionRegistry?.onboarding ?? []).slice(outcomesPage === 1 ? 0 : 10, outcomesPage === 1 ? 10 : 20),
+  );
+  const driversData = formatQuestionRows(questionRegistry?.daily ?? []);
+  const weeklyData = formatQuestionRows(questionRegistry?.weekly ?? []);
+  const monthlyData = formatQuestionRows(questionRegistry?.monthly ?? []);
+  const activeQuestionVersion =
+    questionRegistry?.current_version?.version_id ??
+    adminStore.questionBankVersions.find((version) => !version.retired_date)?.version_id ??
+    adminStore.questionBankVersions[0]?.version_id ??
+    "No active version";
 
   const filteredPeople = people.filter((p) => peopleFilter === "All" || p.role === peopleFilter);
 
@@ -811,63 +1030,6 @@ function RolesView({
         );
     }
   };
-
-  // Mock Question Registry Data
-  const outcomesPage1 = [
-    { id: "O1", driver: "Physical", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "O2", driver: "Sleep", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "O3", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "O4", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "O5", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "O6", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "O7", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "O8", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "O9", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "O10", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-  ];
-
-  const outcomesPage2 = [
-    { id: "O11", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-    { id: "O12", driver: "Physical", direction: "Higher = better", routing: "SCS + PT/IM", validation: "Valid" },
-    { id: "O13", driver: "Recovery", direction: "Higher = better", routing: "SCS + PT/IM", validation: "Valid" },
-  ];
-
-  const driversData = [
-    { id: "D1", driver: "Physical", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "D2", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "D3", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "D4", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-    { id: "D5", driver: "Sleep", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "D6", driver: "Recovery", direction: "Higher = better", routing: "SCS + PT/IM", validation: "Valid" },
-  ];
-
-  const weeklyData = [
-    { id: "W1", driver: "Physical", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "W2", driver: "Sleep", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "W3", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "W4", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "W5", driver: "Mental", direction: "Reverse (higher = lower stress)", routing: "Mental Perf.", validation: "Valid", highlight: true },
-    { id: "W6", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "W7", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-    { id: "W8", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-    { id: "W9", driver: "Recovery", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "W10", driver: "Workout adherence", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-  ];
-
-  const monthlyData = [
-    { id: "M1", driver: "Physical", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "M2", driver: "Sleep", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-    { id: "M3", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "M4", driver: "Nutritional", direction: "Higher = better", routing: "Nutritionist", validation: "Valid" },
-    { id: "M5", driver: "Mental", direction: "Direct (higher = better stress mgmt)", routing: "Mental Perf.", validation: "Valid", highlight: true },
-    { id: "M6", driver: "Mental", direction: "Higher = better", routing: "Mental Perf.", validation: "Valid" },
-    { id: "M7", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-    { id: "M8", driver: "Spiritual", direction: "Higher = better", routing: "Purpose", validation: "Valid" },
-    { id: "M9", driver: "Recovery", direction: "Higher = better", routing: "SCS + PT/IM", validation: "Valid" },
-    { id: "M10", driver: "Compliance", direction: "Higher = better", routing: "SCS", validation: "Valid" },
-  ];
-
-  const currentOutcomes = outcomesPage === 1 ? outcomesPage1 : outcomesPage2;
 
   return (
     <div className="space-y-8 animate-fade-in pb-16">
@@ -972,9 +1134,9 @@ function RolesView({
                   <td className="py-3 font-bold text-slate-800 dark:text-white">{p.name}</td>
                   <td className="py-3 font-mono text-slate-500">{p.email}</td>
                   <td className="py-3">
-                    <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold rounded text-[10px] uppercase">
-                      {p.role}
-                    </span>
+                      <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold rounded text-[10px] uppercase">
+                       {p.roleLabel}
+                      </span>
                   </td>
                   <td className="py-3 text-slate-500">{p.unit || "—"}</td>
                   <td className="py-3">
@@ -1018,7 +1180,7 @@ function RolesView({
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-bold text-slate-800 dark:text-white">Role catalog</h3>
             <span className="px-2 py-0.5 bg-sky-500/10 text-sky-500 text-[10px] font-bold rounded-full">
-              20 Active
+              {adminStore.roleCatalogRaw.length} Active
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -1181,12 +1343,14 @@ function RolesView({
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ACCOUNT STATUS</span>
-              <p className="font-bold text-slate-800 dark:text-white">14 active · 0 expired</p>
-              <p className="text-[10px] text-slate-400">No accounts past access expiration</p>
+              <p className="font-bold text-slate-800 dark:text-white">
+                {adminStore.accountsSummary?.account_status.active_count ?? 0} active · {adminStore.accountsSummary?.account_status.expired_count ?? 0} expired
+              </p>
+              <p className="text-[10px] text-slate-400">Total accounts · {adminStore.accountsSummary?.account_status.total_count ?? 0}</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ASSIGNED PROVIDERS</span>
-              <p className="font-bold text-slate-800 dark:text-white">SCS + PT/IM</p>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.accountsSummary?.assigned_providers.always_available_pathways.join(" + ") || "—"}</p>
               <p className="text-[10px] text-slate-400">Per-caseload assignment</p>
             </div>
           </div>
@@ -1194,8 +1358,8 @@ function RolesView({
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ONBOARDING</span>
-              <p className="font-bold text-slate-800 dark:text-white">3 in flight</p>
-              <p className="text-[10px] text-slate-400">2 awaiting role confirmation</p>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.accountsSummary?.onboarding.in_flight_count ?? 0} in flight</p>
+              <p className="text-[10px] text-slate-400">{adminStore.accountsSummary?.onboarding.awaiting_role_confirmation_count ?? 0} awaiting role confirmation</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">EFFECTIVE PERMISSIONS</span>
@@ -1207,12 +1371,14 @@ function RolesView({
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ACCESS EXPIRATION</span>
-              <p className="font-bold text-slate-800 dark:text-white">31 Dec 2026</p>
-              <p className="text-[10px] text-slate-400">All scopes renew automatically on annual review</p>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.accountsSummary?.access_expiration.expiring_soon_30d_count ?? 0} expiring soon</p>
+              <p className="text-[10px] text-slate-400">{adminStore.accountsSummary?.access_expiration.renewal_note || "No renewal note available"}</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">PURPOSE CONSENT (SEPARATE)</span>
-              <p className="font-bold text-slate-800 dark:text-white">Active · 1 withdrawn</p>
+              <p className="font-bold text-slate-800 dark:text-white">
+                Active · {adminStore.accountsSummary?.purpose_consent.active_count ?? 0} / Withdrawn · {adminStore.accountsSummary?.purpose_consent.withdrawn_count ?? 0}
+              </p>
               <p className="text-[10px] text-slate-400">Revoked consent &rarr; immediate access removal</p>
             </div>
           </div>
@@ -1223,11 +1389,13 @@ function RolesView({
       <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-white">Contract Question Registry · 46 approved questions</h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">O1–O20 + D1–D6 + W1–W10 + M1–M10 = 46 · versioned · scoring direction · routing · validation status</p>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+              Contract Question Registry · {questionRegistry?.total_questions ?? 0} approved questions
+            </h3>
+            <p className="text-[10px] text-slate-500 mt-0.5">O1–O20 + D1–D6 + W1–W10 + M1–M10 = live backend registry · versioned · scoring direction · routing · validation status</p>
           </div>
           <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[9px] font-bold rounded uppercase">
-            Version 2026.7
+            {activeQuestionVersion}
           </span>
         </div>
 
@@ -1269,7 +1437,11 @@ function RolesView({
 
           {/* Outcomes table Pagination */}
           <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-white/5 text-[10px] text-slate-400 select-none">
-            <span>{outcomesPage === 1 ? "1–10 of 13" : "11–13 of 13"}</span>
+            <span>
+              {outcomesPage === 1
+                ? `1–${Math.min(10, questionRegistry?.onboarding.length ?? 0)} of ${questionRegistry?.onboarding.length ?? 0}`
+                : `11–${questionRegistry?.onboarding.length ?? 0} of ${questionRegistry?.onboarding.length ?? 0}`}
+            </span>
             <div className="flex gap-1.5">
               <button
                 onClick={() => setOutcomesPage(1)}
@@ -1398,7 +1570,7 @@ function RolesView({
         </div>
 
         <p className="text-[10px] text-slate-400 italic pt-2">
-          Engine behavior: W5 reverse-score · M5 direct-score. UI shows the LABEL only — never the score direction. Separate from Supplemental Assessments.
+          {adminStore.systemOverview?.reverse_scoring_status || "Scoring direction is loaded from the live registry and system rules."}
         </p>
       </div>
 
@@ -1449,17 +1621,39 @@ function RolesView({
             setViewingPerson(null);
           }}
           onResetPassword={() => {
-            const tempPassword = adminResetPassword(viewingPerson.id);
-            if (tempPassword) {
-              setResetResult({ person: viewingPerson, tempPassword });
+            void (async () => {
+              if (!accessToken) {
+                triggerToast("Your session expired. Please sign in again.");
+                return;
+              }
+
+              const result = await adminResetPassword(accessToken, viewingPerson.id);
+              if (!result.ok) {
+                triggerToast(result.error || "Unable to reset this password.");
+                return;
+              }
+
+              setResetResult({ person: viewingPerson, emailed: result.emailed ?? true });
               setViewingPerson(null);
-            }
+            })();
           }}
           onToggleStatus={() => {
-            const next = viewingPerson.status === "active" ? "deactivated" : "active";
-            setPersonStatus(viewingPerson.id, next);
-            triggerToast(`${viewingPerson.name} ${next === "active" ? "reactivated" : "deactivated"}.`);
-            setViewingPerson(null);
+            void (async () => {
+              if (!accessToken) {
+                triggerToast("Your session expired. Please sign in again.");
+                return;
+              }
+
+              const next = viewingPerson.status === "active" ? "deactivated" : "active";
+              const result = await setPersonStatus(accessToken, viewingPerson.id, next);
+              if (!result.ok) {
+                triggerToast(result.error || "Unable to update account status.");
+                return;
+              }
+
+              triggerToast(`${viewingPerson.name} ${next === "active" ? "reactivated" : "deactivated"}.`);
+              setViewingPerson(null);
+            })();
           }}
         />
       )}
@@ -1473,10 +1667,12 @@ function RolesView({
         >
           <h3 id="password-reset-title" className="text-sm font-bold text-slate-800 dark:text-white">Password reset</h3>
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            New temporary password for <span className="font-bold text-slate-700 dark:text-slate-200">{resetResult.person.name}</span> — share it with them directly, it won&apos;t be shown again.
+            Password reset completed for <span className="font-bold text-slate-700 dark:text-slate-200">{resetResult.person.name}</span>.
           </p>
-          <p className="mt-3 rounded-lg bg-slate-100 dark:bg-[#070a13] px-4 py-3 text-center font-mono text-lg font-bold tracking-widest text-slate-800 dark:text-white">
-            {resetResult.tempPassword}
+          <p className="mt-3 rounded-lg bg-slate-100 dark:bg-[#070a13] px-4 py-3 text-center text-sm font-semibold text-slate-800 dark:text-white">
+            {resetResult.emailed
+              ? "The backend emailed the temporary password to the user."
+              : "The backend completed the reset, but did not report an email status."}
           </p>
           <button
             onClick={() => setResetResult(null)}
@@ -1518,7 +1714,8 @@ function ScopeView({
   setScopeChanged: (val: boolean) => void;
   triggerToast: (msg: string) => void;
 }) {
-  const units = ["Dot 1 - Operations", "Dot 2 - Maint.", "Fit 1A", "Fit 2B", "Fit 3A", "Spt. Staff"];
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const units = adminStore.orgUnits.length > 0 ? adminStore.orgUnits : [];
   const cohortSizes = [1, 5, 8, 12];
 
   type CohortDeployment = {
@@ -1530,9 +1727,13 @@ function ScopeView({
   };
   const [cohortDeployments, setCohortDeployments] = useState<CohortDeployment[]>([]);
 
-  const handleUnitClick = (unit: string) => {
-    adminStore.setSelectedScopeUnit(unit);
+  const handleUnitClick = (unit: { id: string; name: string }) => {
+    adminStore.setSelectedScopeUnit(unit.name);
+    adminStore.setSelectedScopeUnitId(unit.id);
     setScopeChanged(true);
+    if (accessToken) {
+      void adminStore.refreshScopeResolve(accessToken);
+    }
   };
 
   const handleKClick = (k: number) => {
@@ -1545,8 +1746,7 @@ function ScopeView({
     setScopeChanged(true);
   };
 
-  const handleSaveChange = () => {
-    setScopeChanged(false);
+  const handleSaveChange = async () => {
     const activeDrivers = Object.entries(adminStore.driverVisibility)
       .filter(([, visible]) => visible)
       .map(([key]) => key);
@@ -1558,6 +1758,19 @@ function ScopeView({
       at: new Date().toISOString(),
     };
     setCohortDeployments([deployment, ...cohortDeployments]);
+
+    if (!accessToken) {
+      triggerToast("Your session expired. Please sign in again.");
+      return;
+    }
+
+    const result = await adminStore.saveAdminScopeConfig(accessToken);
+    if (!result.ok) {
+      triggerToast(result.error || "Unable to save scope configuration.");
+      return;
+    }
+
+    setScopeChanged(false);
     adminStore.addActivity({
       action: "Cohort config deployed",
       actor: "Lead Admin",
@@ -1607,15 +1820,15 @@ function ScopeView({
             <div className="flex flex-wrap gap-2">
               {units.map((unit) => (
                 <button
-                  key={unit}
+                  key={unit.id}
                   onClick={() => handleUnitClick(unit)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border ${
-                    adminStore.selectedScopeUnit === unit
+                    adminStore.selectedScopeUnitId === unit.id
                       ? "bg-[var(--brand-color)] text-white border-transparent"
                       : "bg-slate-50 dark:bg-[#070a13] border-slate-200 dark:border-white/5 text-slate-600 dark:text-slate-300 hover:bg-slate-100"
                   }`}
                 >
-                  {unit}
+                  {unit.name}
                 </button>
               ))}
             </div>
@@ -1683,21 +1896,23 @@ function ScopeView({
             Scope inheritance
           </h3>
 
-          <div className="space-y-4 text-xs font-mono">
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border dark:border-white/5 space-y-1">
-              <p className="text-slate-800 dark:text-slate-300 font-bold">Wing-level</p>
-              <p className="text-[10px] text-slate-400">Det 1 Ops · Det 2 Maint · Fit 1A</p>
+            <div className="space-y-4 text-xs font-mono">
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border dark:border-white/5 space-y-1">
+                <p className="text-slate-800 dark:text-slate-300 font-bold">Wing-level</p>
+                <p className="text-[10px] text-slate-400">
+                  {adminStore.scopeResolution?.ancestor_path.map((item) => item.name).join(" · ") || "No live unit resolution loaded"}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border dark:border-white/5 space-y-1">
+                <p className="text-slate-800 dark:text-slate-300 font-bold">Resolved members</p>
+                <p className="text-[10px] text-slate-400">{adminStore.scopeResolution?.member_count_in_unit ?? 0} members in selected unit</p>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border dark:border-white/5 space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase">PT/IM caseload</span>
+                <p className="text-slate-800 dark:text-slate-300 font-bold">{adminStore.scopeResolution?.role_scope.caseload || "none"}</p>
+                <p className="text-[10px] text-amber-500">Global: {adminStore.scopeResolution?.role_scope.global || "none"}</p>
+              </div>
             </div>
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border dark:border-white/5 space-y-1">
-              <p className="text-slate-800 dark:text-slate-300 font-bold">Wing-level</p>
-              <p className="text-[10px] text-slate-400">Det 1 Ops · Det 2 Maint</p>
-            </div>
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border dark:border-white/5 space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase">PT/IM caseload</span>
-              <p className="text-slate-800 dark:text-slate-300 font-bold">Caseload</p>
-              <p className="text-[10px] text-amber-500">Gated · 14 / 22 / 9 records</p>
-            </div>
-          </div>
 
           {cohortDeployments.length > 0 && (
             <div className="pt-3 border-t border-slate-100 dark:border-white/5">
@@ -1750,23 +1965,12 @@ function ScopeView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {(
-                [
-                  { role: "Operator", self: "own", flight: "-", caseload: "-", optin: "-", wing: "-", global: "-" },
-                  { role: "SCS", self: "own", flight: "-", caseload: "active", optin: "-", wing: "gated", global: "-" },
-                  { role: "PT/IM", self: "own", flight: "-", caseload: "active", optin: "confirm", wing: "gated", global: "-" },
-                  { role: "MP", self: "own", flight: "-", caseload: "-", optin: "confirm", wing: "-", global: "-" },
-                  { role: "Nutrition", self: "own", flight: "-", caseload: "active", optin: "confirm", wing: "-", global: "-" },
-                  { role: "Purpose", self: "own", flight: "-", caseload: "-", optin: "-", wing: "-", global: "-" },
-                  { role: "Plan", self: "own", flight: "-", caseload: "active", optin: "active", wing: "active", global: "gated" },
-                  { role: "Leadership", self: "own", flight: "-", caseload: "-", optin: "-", wing: "-", global: "active" },
-                  { role: "Admin", self: "own", flight: "active", caseload: "active", optin: "active", wing: "active", global: "active" },
-                ] as CoverageRow[]
-              ).map((row, idx) => (
+              {adminStore.scopeMatrix.map((row, idx) => (
                 <tr key={idx} className="align-middle">
                   <td className="py-3 font-bold text-slate-800 dark:text-white">{row.role}</td>
-                  {(["self", "flight", "caseload", "optin", "wing", "global"] as (keyof Omit<CoverageRow, "role">)[]).map((col) => {
-                    const status = row[col];
+                  {(["self", "unit_visibility", "caseload", "opt_in", "aggregate_wing", "global"] as const).map((col) => {
+                    const raw = String(row[col]);
+                    const status = raw === "none" ? "-" : raw === "k>=5" ? "gated" : raw.startsWith("opt-in") ? "confirm" : raw === "active" ? "active" : raw;
                     return (
                       <td key={col} className="py-3 text-center">
                         {status === "-" ? (
@@ -1811,37 +2015,33 @@ function ScopeView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {[
-                { name: "Nutritionist", app: "Approved · 14 Jan 2026", en: "Enabled · 01 Feb 2026", st: "1 nutritionist · onboarded", pa: "Per-caseload · 4 ops", dates: "Caseload window · 12 mo", data: "Authorized Nutrition Context only" },
-                { name: "Mental Performance", app: "Approved · 14 Jan 2026", en: "Enabled · 01 Feb 2026", st: "1 mental perf · onboarded", pa: "Opt-in only · 8 active", dates: "Opt-in · revocable", data: "Pattern-based only · k=1 not surfaced to leadership" },
-                { name: "Purpose Coach", app: "Approved · 14 Jan 2026", en: "Enabled · 01 Feb 2026", st: "1 purpose coach · onboarded", pa: "Opt-in only · 4 active", dates: "Opt-in · revocable", data: "Assigned operators with active consent only" },
-              ].map((row, idx) => (
+              {adminStore.pathwayMatrix.map((row, idx) => (
                 <tr key={idx} className="align-middle">
-                  <td className="py-4 font-bold text-slate-800 dark:text-white">{row.name}</td>
+                  <td className="py-4 font-bold text-slate-800 dark:text-white">{row.pathway_key}</td>
                   <td className="py-4">
                     <span className="flex items-center gap-1.5 text-emerald-500 font-semibold">
-                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.app}
+                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.approval.status}
                     </span>
                   </td>
                   <td className="py-4">
                     <span className="flex items-center gap-1.5 text-emerald-500 font-semibold">
-                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.en}
+                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.approval.enabled_at ? `Enabled · ${formatAdminDate(row.approval.enabled_at)}` : "Awaiting enablement"}
                     </span>
                   </td>
                   <td className="py-4">
                     <span className="flex items-center gap-1.5 text-emerald-500">
-                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.st}
+                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.staffing} staff · {row.active_opt_in_count} active
                     </span>
                   </td>
                   <td className="py-4">
                     <span className="flex items-center gap-1.5 text-emerald-500">
-                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.pa}
+                      <span className="size-1.5 rounded-full bg-emerald-500"></span> {row.provider_assignment_model}
                     </span>
                   </td>
-                  <td className="py-4 text-slate-500 dark:text-slate-400">{row.dates}</td>
+                  <td className="py-4 text-slate-500 dark:text-slate-400">{row.approval.access_policy || "Not set"}</td>
                   <td className="py-4">
                     <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 font-bold rounded">
-                      {row.data}
+                      {row.data_access}
                     </span>
                   </td>
                 </tr>
@@ -1893,16 +2093,12 @@ function AuditLogView({
   adminStore: AdminStore;
 }) {
   const categories = ["All", "Login", "Record access", "Export", "Config change", "Deactivation"];
-
-  const filteredLogs = adminStore.recentActivity.filter((log: ActivityItem) => {
-    // Category match
-    const catMatch = adminStore.auditFilter === "All" || log.action.toLowerCase().includes(adminStore.auditFilter.toLowerCase()) || log.actor.toLowerCase().includes(adminStore.auditFilter.toLowerCase());
-    
-    // Search query match
-    const text = (log.actor + log.action + log.scope).toLowerCase();
-    const queryMatch = text.includes(adminStore.auditSearchQuery.toLowerCase());
-    
-    return catMatch && queryMatch;
+  const filteredLogs = adminStore.auditEntries.filter((log) => {
+    const haystack = `${log.event_type} ${log.actor_role ?? ""} ${log.summary_message} ${log.target_entity_type ?? ""}`.toLowerCase();
+    const queryMatch = haystack.includes(adminStore.auditSearchQuery.toLowerCase());
+    const category = adminStore.auditFilter.toLowerCase();
+    const categoryMatch = adminStore.auditFilter === "All" || haystack.includes(category);
+    return categoryMatch && queryMatch;
   });
 
   const getSeverityColor = (color: string) => {
@@ -1927,7 +2123,9 @@ function AuditLogView({
         <Lock className="size-5 text-[var(--brand-color)] flex-shrink-0 mt-0.5" />
         <div>
           <span className="font-bold text-slate-800 dark:text-white">Audit log · every action, immutable</span>
-          <p className="mt-0.5">2,184 entries in the last 24 hours. Filterable by actor role, scope, and severity. Drill down into any row for full context.</p>
+          <p className="mt-0.5">
+            {adminStore.auditStats?.count_24h ?? 0} entries in the last 24 hours. Filterable by actor role, scope, and severity. Drill down into any row for full context.
+          </p>
         </div>
       </div>
 
@@ -1955,28 +2153,28 @@ function AuditLogView({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">24h</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">2,184</span>
-          <span className="text-[10px] text-emerald-500 font-bold block">+12% vs 7d avg</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{adminStore.auditStats?.count_24h ?? 0}</span>
+          <span className="text-[10px] text-emerald-500 font-bold block">{adminStore.auditStats?.percent_vs_7d_avg ?? 0}% vs 7d avg</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">7d</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">14,902</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">93% log only</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{adminStore.auditStats?.count_7d ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">{adminStore.auditStats?.retention_years ?? 0} year retention</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Record accesses</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">128</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{adminStore.auditStats?.record_access_count_24h ?? 0}</span>
           <div className="flex items-center gap-1.5 mt-1">
             <span className="size-1.5 rounded-full bg-amber-500"></span>
-            <span className="text-[10px] text-amber-500 font-bold">3 with reason</span>
+            <span className="text-[10px] text-amber-500 font-bold">Medical-record access in 24h</span>
           </div>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Destructive actions</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">7</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{adminStore.auditStats?.destructive_action_total_count ?? 0}</span>
           <div className="flex items-center gap-1.5 mt-1">
             <span className="size-1.5 rounded-full bg-red-500"></span>
-            <span className="text-[10px] text-red-500 font-bold">3 pending review</span>
+            <span className="text-[10px] text-red-500 font-bold">{adminStore.auditStats?.destructive_action_pending_review_count ?? 0} pending review</span>
           </div>
         </div>
       </div>
@@ -2040,17 +2238,17 @@ function AuditLogView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-mono text-[11px]">
-                {filteredLogs.map((log: ActivityItem) => (
+                {filteredLogs.map((log) => (
                   <tr key={log.id} className="align-middle">
                     <td className="py-3">
-                      <div className={`size-1.5 rounded-full ${getSeverityColor(log.tagColor)}`} />
+                      <div className={`size-1.5 rounded-full ${getSeverityColor(log.outcome_status === "success" ? "green" : "orange")}`} />
                     </td>
-                    <td className="py-3 text-slate-400">[{log.time}]</td>
+                    <td className="py-3 text-slate-400">[{formatAdminDate(log.created_at, true)}]</td>
                     <td className="py-3 text-slate-600 dark:text-slate-300 font-sans">
-                      <span className="font-bold text-slate-800 dark:text-white mr-1.5">{log.actor}</span>
-                      {log.action}
+                      <span className="font-bold text-slate-800 dark:text-white mr-1.5">{log.actor_role || "System"}</span>
+                      {log.summary_message}
                     </td>
-                    <td className="py-3 text-right text-slate-500 dark:text-slate-400">{log.scope}</td>
+                    <td className="py-3 text-right text-slate-500 dark:text-slate-400">{log.target_entity_type || "audit"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2083,20 +2281,13 @@ function AuditLogView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-sans">
-              {[
-                { cat: "Permission changes", h24: 3, d7: 14, d30: 62, ret: "7 yr" },
-                { cat: "Recommendation changes", h24: 8, d7: 41, d30: 189, ret: "7 yr" },
-                { cat: "Resolved/archived", h24: 5, d7: 22, d30: 94, ret: "7 yr" },
-                { cat: "Medical-record access", h24: 11, d7: 62, d30: 248, ret: "7 yr · minimum-necessary" },
-                { cat: "Downloads", h24: 2, d7: 14, d30: 61, ret: "7 yr · reason required" },
-                { cat: "Exports", h24: 4, d7: 22, d30: 96, ret: "7 yr · 2nd reviewer" },
-              ].map((row, idx) => (
-                <tr key={idx} className="align-middle">
-                  <td className="py-3 font-bold text-slate-800 dark:text-white">{row.cat}</td>
-                  <td className="py-3 text-slate-700 dark:text-slate-300 font-mono">{row.h24}</td>
-                  <td className="py-3 text-slate-700 dark:text-slate-300 font-mono">{row.d7}</td>
-                  <td className="py-3 text-slate-700 dark:text-slate-300 font-mono">{row.d30}</td>
-                  <td className="py-3 text-slate-500 dark:text-slate-400 font-mono">{row.ret}</td>
+              {adminStore.auditRollup.map((row) => (
+                <tr key={row.category} className="align-middle">
+                  <td className="py-3 font-bold text-slate-800 dark:text-white">{row.category}</td>
+                  <td className="py-3 text-slate-700 dark:text-slate-300 font-mono">{row.last_24h}</td>
+                  <td className="py-3 text-slate-700 dark:text-slate-300 font-mono">{row.last_7d}</td>
+                  <td className="py-3 text-slate-700 dark:text-slate-300 font-mono">{row.last_30d}</td>
+                  <td className="py-3 text-slate-500 dark:text-slate-400 font-mono">{adminStore.auditStats?.retention_years ?? 0} yr</td>
                 </tr>
               ))}
             </tbody>
@@ -2124,13 +2315,8 @@ function ExportsView({
   setActiveReviewItem: (item: ConfirmationItem | null) => void;
   triggerToast: (msg: string) => void;
 }) {
+  const accessToken = useAuthStore((state) => state.accessToken);
   const [showConfirmExportBar, setShowConfirmExportBar] = useState(false);
-  const [schedules, setSchedules] = useState([
-    { id: "sch-1", name: "Wing 0 aggregate", cadence: "Weekly · Mon 08:00", scope: "Kz-5", format: "PDF + CSV", nextRun: "04 Aug · 08:00", status: REPORT_STATUSES.ACTIVE },
-    { id: "sch-2", name: "Monthly cohort review", cadence: "Monthly · 1st 09:00", scope: "Kz5", format: "PDF", nextRun: "01 Aug · 09:00", status: REPORT_STATUSES.ACTIVE },
-    { id: "sch-3", name: "PT/IM caseload audit", cadence: "Quarterly", scope: "caseload", format: "CSV", nextRun: "30 Sep · 08:00", status: REPORT_STATUSES.PAUSED },
-    { id: "sch-4", name: "IDMT handoff digest", cadence: "Weekly · Fri 16:00", scope: "handoff", format: "PDF", nextRun: "01 Aug · 16:00", status: REPORT_STATUSES.ACTIVE },
-  ]);
   const [showScheduleWizard, setShowScheduleWizard] = useState(false);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState({
@@ -2142,31 +2328,45 @@ function ExportsView({
   });
 
   const handleEditSchedule = (id: string) => {
-    const target = schedules.find((s) => s.id === id);
+    const target = adminStore.scheduledExports.find((s) => s.id === id);
     if (target) {
       setEditingScheduleId(id);
       setScheduleForm({
         name: target.name,
-        cadence: target.cadence,
-        scope: target.scope,
-        format: target.format,
-        recipients: "Wing CC + DPH",
+        cadence: cadenceToLabel(target.cadence),
+        scope: target.sensitivity_level,
+        format: formatToLabel(target.export_format),
+        recipients: target.recipient_role,
       });
     }
     setShowScheduleWizard(true);
     triggerToast("Configuring recurring schedule...");
   };
 
-  const handleSubmitSchedule = () => {
-    if (!scheduleForm.name.trim()) return;
+  const handleSubmitSchedule = async () => {
+    if (!scheduleForm.name.trim() || !accessToken) return;
+
+    const payload = {
+      name: scheduleForm.name.trim(),
+      report_type: inferReportType(scheduleForm.scope),
+      export_format: formatToApiValue(scheduleForm.format),
+      cadence: cadenceToApiValue(scheduleForm.cadence),
+      recipient_role: scheduleForm.recipients.trim() || "DWS Admin",
+    };
+
     if (editingScheduleId) {
-      setSchedules((prev) =>
-        prev.map((s) =>
-          s.id === editingScheduleId
-            ? { ...s, name: scheduleForm.name, cadence: scheduleForm.cadence, scope: scheduleForm.scope, format: scheduleForm.format }
-            : s
-        )
-      );
+      try {
+        await updateAdminScheduledExport(accessToken, editingScheduleId, {
+          name: payload.name,
+          cadence: payload.cadence,
+          export_format: payload.export_format,
+          recipient_role: payload.recipient_role,
+        });
+      } catch (error) {
+        triggerToast(formatAdminApiError(error));
+        return;
+      }
+
       adminStore.addActivity({
         action: "Schedule updated",
         actor: "Lead Admin",
@@ -2177,26 +2377,25 @@ function ExportsView({
       });
       triggerToast(`Schedule updated: ${scheduleForm.name}`);
     } else {
-      const newSchedule = {
-        id: `sch-${Date.now()}`,
-        name: scheduleForm.name,
-        cadence: scheduleForm.cadence,
-        scope: scheduleForm.scope,
-        format: scheduleForm.format,
-        nextRun: "—",
-        status: REPORT_STATUSES.ACTIVE,
-      };
-      setSchedules((prev) => [newSchedule, ...prev]);
+      try {
+        await createAdminScheduledExport(accessToken, payload);
+      } catch (error) {
+        triggerToast(formatAdminApiError(error));
+        return;
+      }
+
       adminStore.addActivity({
         action: "Schedule added",
         actor: "Lead Admin",
-        reason: `${newSchedule.name} · ${newSchedule.cadence} · ${scheduleForm.recipients}`,
+        reason: `${scheduleForm.name} · ${scheduleForm.cadence} · ${scheduleForm.recipients}`,
         scope: "Admin · Exports",
         tag: "system",
         tagColor: "blue",
       });
-      triggerToast(`Schedule added: ${newSchedule.name}`);
+      triggerToast(`Schedule added: ${scheduleForm.name}`);
     }
+
+    await adminStore.initialize(accessToken);
     setShowScheduleWizard(false);
     setEditingScheduleId(null);
     setScheduleForm({ name: "", cadence: "Weekly · Mon 08:00", scope: "Kz-5", format: "PDF", recipients: "Wing CC + DPH" });
@@ -2310,21 +2509,18 @@ function ExportsView({
           </h3>
 
           <div className="space-y-4 text-xs font-mono">
-            {[
-              { name: "Wing Q3 aggregate · PDF", info: "8.4 MB · scheduled · sent 28 Jul · 08:00", tag: "Sent" },
-              { name: "Recovery program progress · CSV", info: "0.6 MB · ad-hoc · 3 flights · sent 21 Jul · 09:14", tag: "Sent" },
-              { name: "OFT pass rate - monthly · PPTX", info: "2.1 MB · scheduled · sent 14 Jul · 12:02", tag: "Sent" },
-              { name: "Sleep watch brief · PDF", info: "0.3 MB · ad-hoc · draft · created 21 Jul · 07:55", tag: "Draft" },
-            ].map((exp, idx) => (
-              <div key={idx} className="flex justify-between items-start gap-4">
+            {adminStore.exportHistory.slice(0, 4).map((exp) => (
+              <div key={exp.id} className="flex justify-between items-start gap-4">
                 <div className="space-y-0.5">
-                  <p className="font-bold text-slate-800 dark:text-white">{exp.name}</p>
-                  <p className="text-[10px] text-slate-400">{exp.info}</p>
+                  <p className="font-bold text-slate-800 dark:text-white">{exp.title || exp.report_type} · {exp.export_format.toUpperCase()}</p>
+                  <p className="text-[10px] text-slate-400">
+                    {exp.file_size_bytes ? `${(exp.file_size_bytes / 1024).toFixed(1)} KB` : "size pending"} · {exp.date_range || "current"} · {formatAdminDate(exp.created_at, true)}
+                  </p>
                 </div>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold select-none ${
-                  exp.tag === "Sent" ? "bg-emerald-500/10 text-emerald-500" : "bg-slate-100 text-slate-400"
+                  exp.export_log_status === "completed" || exp.export_log_status === "approved" ? "bg-emerald-500/10 text-emerald-500" : "bg-slate-100 text-slate-400"
                 }`}>
-                  {exp.tag}
+                  {exp.export_log_status === "completed" || exp.export_log_status === "approved" ? "Sent" : "Draft"}
                 </span>
               </div>
             ))}
@@ -2364,20 +2560,20 @@ function ExportsView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {schedules.map((sch) => (
+              {adminStore.scheduledExports.map((sch) => (
                 <tr key={sch.id} className="align-middle">
                   <td className="py-3 font-bold text-slate-800 dark:text-white">{sch.name}</td>
-                  <td className="py-3 text-slate-500 dark:text-slate-400">{sch.cadence}</td>
+                  <td className="py-3 text-slate-500 dark:text-slate-400">{cadenceToLabel(sch.cadence)}</td>
                   <td className="py-3">
                     <span className="px-1.5 py-0.5 bg-[var(--brand-color)/10] text-[var(--brand-color)] text-[9px] font-bold rounded">
-                      {sch.scope}
+                      {sch.sensitivity_level}
                     </span>
                   </td>
-                  <td className="py-3 text-slate-500">{sch.format}</td>
-                  <td className="py-3 font-semibold">{sch.nextRun}</td>
+                  <td className="py-3 text-slate-500">{formatToLabel(sch.export_format)}</td>
+                  <td className="py-3 font-semibold">{formatAdminDate(sch.next_run_at, true)}</td>
                   <td className="py-3">
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase select-none ${
-                      sch.status === "Active" ? "bg-emerald-500/10 text-emerald-500" : "bg-slate-100 text-slate-400"
+                      sch.status === "active" ? "bg-emerald-500/10 text-emerald-500" : "bg-slate-100 text-slate-400"
                     }`}>
                       {sch.status}
                     </span>
@@ -2421,36 +2617,29 @@ function ExportsView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {[
-                { name: "Monthly OFT Metrics", pr: "Jul 2026", due: "05 Aug 2026", rec: "Wing CC + DPH", app: "Approved · Capt Shah", sens: "CUI", time: "—", status: "Pending" },
-                { name: "Quarterly Utilization", pr: "Q3 2026", due: "15 Oct 2026", rec: "Wing CC + DPH", app: "Drafted", sens: "CUI", time: "—", status: "Pending" },
-                { name: "Quarterly Injury/Recovery", pr: "Q3 2026", due: "15 Oct 2026", rec: "Wing CC + DPH", app: "Drafted", sens: "CUI", time: "—", status: "Pending" },
-                { name: "Assessment Completion", pr: "Monthly", due: "05 Aug 2026", rec: "Wing CC", app: "Approved · Capt Chen", sens: "CUI", time: "27 Jul · 14:02", status: "Logged" },
-                { name: "PRS/QCP Support", pr: "Monthly", due: "05 Aug 2026", rec: "DPH + Wing CC", app: "Approved · Plan role", sens: "CUI", time: "27 Jul · 14:08", status: "Logged" },
-                { name: "Leadership Aggregate Readiness", pr: "Monthly", due: "05 Aug 2026", rec: "Wing CC + DPH", app: "Approved · Lt Col Park", sens: "CUI", time: "27 Jul · 14:18", status: "Logged" },
-              ].map((row, idx) => (
-                <tr key={idx} className="align-middle">
-                  <td className="py-3 font-bold text-slate-800 dark:text-white">{row.name}</td>
-                  <td className="py-3 text-slate-500">{row.pr}</td>
-                  <td className="py-3 text-slate-500">{row.due}</td>
-                  <td className="py-3 text-slate-800 dark:text-slate-300 font-semibold">{row.rec}</td>
+              {adminStore.requiredReports.slice(0, 6).map((row) => (
+                <tr key={row.report_type} className="align-middle">
+                  <td className="py-3 font-bold text-slate-800 dark:text-white">{row.docx_name}</td>
+                  <td className="py-3 text-slate-500">{row.report_type}</td>
+                  <td className="py-3 text-slate-500">{row.ever_generated ? "Generated" : "Pending"}</td>
+                  <td className="py-3 text-slate-800 dark:text-slate-300 font-semibold">{row.primary_users}</td>
                   <td className="py-3">
                     <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                      row.app.includes("Approved") ? "bg-emerald-500/10 text-emerald-500" : "bg-slate-100 text-slate-400"
+                      row.last_export_status ? "bg-emerald-500/10 text-emerald-500" : "bg-slate-100 text-slate-400"
                     }`}>
-                      {row.app}
+                      {row.last_export_status || "Drafted"}
                     </span>
                   </td>
-                  <td className="py-3 text-slate-400">{row.sens}</td>
-                  <td className="py-3 text-slate-500">{row.time}</td>
+                  <td className="py-3 text-slate-400">{row.report_type.includes("audit") || row.report_type.includes("injury") ? "Restricted" : "Aggregate"}</td>
+                  <td className="py-3 text-slate-500">{formatAdminDate(row.last_generated_at, true)}</td>
                   <td className="py-3 text-right">
                     <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${
-                      row.status === "Logged" ? "text-emerald-500" : "text-sky-500"
+                      row.ever_generated ? "text-emerald-500" : "text-sky-500"
                     }`}>
                       <span className={`size-1.5 rounded-full ${
-                        row.status === "Logged" ? "bg-emerald-500" : "bg-sky-500 animate-pulse"
+                        row.ever_generated ? "bg-emerald-500" : "bg-sky-500 animate-pulse"
                       }`}></span>
-                      {row.status}
+                      {row.ever_generated ? "Logged" : "Pending"}
                     </span>
                   </td>
                 </tr>
@@ -2621,40 +2810,155 @@ function SystemView({
   adminStore: AdminStore;
   triggerToast: (msg: string) => void;
 }) {
-  const [localSystemChanged, setLocalSystemChanged] = useState(false);
-  const [deactivations, setDeactivations] = useState([
-    { id: "de-1", initials: "SCS", name: "Staff - SCS", role: "Staff", activity: "10 Jul - 11:22", caseloads: "8", reassign: "SCS Liaison" },
-    { id: "de-2", initials: "MP", name: "Staff - Mental Performance", role: "Staff", activity: "08 Jul - 16:00", caseloads: "4", reassign: "Dr. Patel" },
-    { id: "de-3", initials: "OP", name: "Operator", role: "Operator", activity: "28 Jun - 09:14", caseloads: "—", reassign: "—" },
-  ]);
+  const systemOverview = adminStore.systemOverview;
+  const systemDiagnostics = adminStore.systemDiagnostics;
+  const questionRegistry = adminStore.questionRegistry;
+  const thresholdRules = systemOverview?.threshold_rules;
+  const totalServices = adminStore.services.length;
+  const healthyServices = adminStore.services.filter((service) => service.status === SERVICE_STATUS.ONLINE).length;
+  const diagnosticRuns = systemDiagnostics?.scheduler_jobs ?? [];
+  const latestDiagnosticRun = diagnosticRuns
+    .map((job) => job.last_run_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+  const roleProtectionCount = adminStore.roleCatalogRaw.filter(
+    (role) => role.cluster === "Officer" || role.cluster === "System",
+  ).length;
+  const questionVersionCount = adminStore.questionBankVersions.length;
+  const questionTotal = questionRegistry?.total_questions ?? systemOverview?.question_bank.total_questions ?? 0;
+  const totalUtilizationEvents = adminStore.utilizationEvents.length;
+  const usedUtilizationEvents = adminStore.utilizationEvents.filter((event) => event.actual_use).length;
+  const averageAttendance = totalUtilizationEvents
+    ? Math.round(
+        adminStore.utilizationEvents.reduce((sum, event) => sum + (event.attendance_count ?? 0), 0) /
+          totalUtilizationEvents,
+      )
+    : 0;
+  const distinctStaffLeads = new Set(
+    adminStore.utilizationEvents
+      .map((event) => event.staff_lead_name)
+      .filter((name): name is string => Boolean(name)),
+  ).size;
+  const deactivations = [
+    ...((systemOverview?.deactivation_queue.admin_initiated_pending ?? []).map((item) => {
+      const rowCount =
+        item.payload && typeof item.payload.row_count === "number" ? String(item.payload.row_count) : "—";
 
-  const [queues, setQueues] = useState([
-    { queue: "Provider coverage", assigned: "Plan lead", status: REPORT_STATUSES.OPEN, due: "31 Jul", recipient: "Red flag list", overflow: "—" },
-    { queue: "Support", assigned: "Plan lead", status: REPORT_STATUSES.OPEN, due: "Rolling 7d", recipient: "Provider support tickets", overflow: "—" },
-    { queue: "Corrective actions", assigned: "SCS lead", status: REPORT_STATUSES.OPEN, due: "15 Aug", recipient: "Minor warnings followups", overflow: "—" },
-    { queue: "IMT documentation handoffs", assigned: "PT/IM + IDMT", status: REPORT_STATUSES.APPROVED, due: "Weekly", recipient: "Last 7d clinical", overflow: "27 min", action: "Locked" },
-    { queue: "Medical access audit", assigned: "Active audit", status: REPORT_STATUSES.PASS, due: "Weekly", recipient: "No anomalies", overflow: "27 min", action: "Locked" },
-    { queue: "Retention/disposition", assigned: "Active audit", status: REPORT_STATUSES.CONSENTED, due: "31 Jul", recipient: "7 yr retention sweep", overflow: "—" },
-    { queue: "Export audit", assigned: "Active audit", status: REPORT_STATUSES.PASS, due: "Daily", recipient: "Aggregate logs check", overflow: "27 min", action: "Locked" },
-    { queue: "Equipment gaps", assigned: "SCS lead", status: REPORT_STATUSES.OPEN, due: "10 Aug", recipient: "Temp service class 2 sensor", overflow: "—" },
-    { queue: "Fly Army IM", assigned: "SCS lead", status: REPORT_STATUSES.PENDING_LINK, due: "Monthly", recipient: "Last verified 26 Jul", overflow: "22 min", action: "Locked" },
-  ]);
-
-  const handleResolveDeactivation = (id: string) => {
-    setDeactivations(prev => prev.filter(item => item.id !== id));
-    setLocalSystemChanged(true);
-    triggerToast("Deactivation candidate queue reassignment queued.");
-  };
-
-  const handleRouteQueue = (queueName: string) => {
-    setLocalSystemChanged(true);
-    triggerToast(`Routing operation queue for ${queueName}.`);
-  };
-
-  const handleConfirmChanges = () => {
-    setLocalSystemChanged(false);
-    triggerToast("System parameter thresholds updated globally.");
-  };
+      return {
+        id: item.id,
+        initials: getInitials(item.target_summary),
+        name: item.target_summary || "Pending deactivation",
+        role: formatTitle(item.action_type),
+        activity: formatAdminDate(item.requested_at, true),
+        caseloads: rowCount,
+        reassign: item.scope_summary || item.consequence_summary || "Awaiting review",
+      };
+    }) ?? []),
+    ...((systemOverview?.deactivation_queue.self_service_pending ?? []).map((item) => ({
+      id: item.id,
+      initials: getInitials(item.user_name),
+      name: item.user_name,
+      role: "Self-service",
+      activity: formatAdminDate(item.requested_at, true),
+      caseloads: "—",
+      reassign: item.reason || formatTitle(item.status),
+    })) ?? []),
+  ];
+  const thresholdRows = thresholdRules
+    ? [
+        { rate: "Cohort minimum (k)", val: String(thresholdRules.cohort_minimum_k), applies: "Aggregate views" },
+        { rate: "Severity L2 trigger", val: String(thresholdRules.l2_drop_points), applies: "Driver alerts" },
+        { rate: "Severity L3 trigger", val: String(thresholdRules.l3_drop_points), applies: "Driver alerts" },
+        { rate: "Severity L4 trigger", val: String(thresholdRules.l4_drop_points), applies: "Safety routing" },
+        {
+          rate: "Confidence rule",
+          val: thresholdRules.confidence_rule,
+          applies: "Recommendation engine",
+        },
+        {
+          rate: "Deactivation grace",
+          val: `${thresholdRules.deactivation_grace_days} days`,
+          applies: "Inactive accounts",
+        },
+        {
+          rate: "Export approval window",
+          val: `${thresholdRules.export_approval_window_hours}h`,
+          applies: "Clinical exports",
+        },
+      ]
+    : [];
+  const operationalQueues = [
+    {
+      queue: "Pending confirmations",
+      assignment: "Admin review",
+      status: `${adminStore.pendingConfirmations.length} open`,
+      statusType: adminStore.pendingConfirmations.length > 0 ? "orange" : "green",
+      due: "Live",
+      resolution: "Second-review gating",
+      closure: adminStore.pendingConfirmations[0] ? formatCompactDate(adminStore.exportHistory[0]?.created_at) : "—",
+      audit: adminStore.pendingConfirmations.length > 0 ? "Pending" : "Logged",
+    },
+    {
+      queue: "Deactivation review",
+      assignment: "System admin",
+      status: `${deactivations.length} queued`,
+      statusType: deactivations.length > 0 ? "orange" : "green",
+      due: thresholdRules ? `${thresholdRules.deactivation_grace_days}d window` : "—",
+      resolution: "User and scope review",
+      closure: deactivations[0]?.activity ?? "—",
+      audit: deactivations.length > 0 ? "Pending" : "Logged",
+    },
+    {
+      queue: "Equipment gaps",
+      assignment: "Provider ops",
+      status: `${adminStore.equipmentGaps.length} tracked`,
+      statusType: adminStore.equipmentGaps.some((gap) => gap.status.toLowerCase() !== "resolved") ? "orange" : "green",
+      due: adminStore.equipmentGaps[0] ? formatCompactDate(adminStore.equipmentGaps[0].date_identified) : "—",
+      resolution: adminStore.equipmentGaps[0]?.item ?? "No open gaps",
+      closure: adminStore.equipmentGaps[0]?.status ?? "Closed",
+      audit: adminStore.equipmentGaps.some((gap) => !gap.included_in_report) ? "Pending" : "Logged",
+    },
+    {
+      queue: "Credential readiness",
+      assignment: "Admin ops",
+      status: `${adminStore.credentials.length} credentials`,
+      statusType: adminStore.credentials.some((credential) => credential.status.toLowerCase() !== "active") ? "cyan" : "green",
+      due: adminStore.credentials[0]?.expiration_date ? formatCompactDate(adminStore.credentials[0].expiration_date) : "—",
+      resolution: adminStore.credentials[0]?.provider_name ?? "No credentials loaded",
+      closure: adminStore.credentials[0]?.status ?? "—",
+      audit: adminStore.credentials.length > 0 ? "Logged" : "Pending",
+    },
+    {
+      queue: "Scheduled exports",
+      assignment: "Report scheduler",
+      status: `${adminStore.scheduledExports.length} scheduled`,
+      statusType: adminStore.scheduledExports.length > 0 ? "cyan" : "orange",
+      due: adminStore.scheduledExports[0]?.next_run_at ? formatCompactDate(adminStore.scheduledExports[0].next_run_at) : "—",
+      resolution: adminStore.scheduledExports[0]?.name ?? "No schedules configured",
+      closure: adminStore.scheduledExports[0]?.status ?? "—",
+      audit: adminStore.scheduledExports.length > 0 ? "Logged" : "Pending",
+    },
+    {
+      queue: "Export audit",
+      assignment: "Audit log",
+      status: `${adminStore.exportHistory.length} exports`,
+      statusType: adminStore.exportHistory.some((item) => item.lifecycle_status !== "completed") ? "cyan" : "green",
+      due: latestDiagnosticRun ? formatCompactDate(latestDiagnosticRun) : "—",
+      resolution: adminStore.exportHistory[0]?.title ?? adminStore.exportHistory[0]?.report_type ?? "No exports yet",
+      closure: adminStore.exportHistory[0]?.lifecycle_status ?? "—",
+      audit: adminStore.exportHistory.length > 0 ? "Logged" : "Pending",
+    },
+    {
+      queue: "Utilization feed",
+      assignment: "Operations",
+      status: `${usedUtilizationEvents}/${totalUtilizationEvents} used`,
+      statusType: totalUtilizationEvents > 0 ? "cyan" : "orange",
+      due: adminStore.utilizationEvents[0] ? formatCompactDate(adminStore.utilizationEvents[0].event_date) : "—",
+      resolution: adminStore.utilizationEvents[0]?.opportunity_offered ?? "No utilization events",
+      closure: totalUtilizationEvents > 0 ? `${averageAttendance} avg attendance` : "—",
+      audit: totalUtilizationEvents > 0 ? "Logged" : "Pending",
+    },
+  ];
 
   return (
     <div className="space-y-8 animate-fade-in pb-16">
@@ -2663,8 +2967,13 @@ function SystemView({
       <div className="bg-[#1e293b]/20 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-white/5 flex gap-3 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
         <Sliders className="size-5 text-[var(--brand-color)] flex-shrink-0 mt-0.5" />
         <div>
-          <span className="font-bold text-slate-800 dark:text-white">System module · R6.90A - 26d</span>
-          <p className="mt-0.5">7 sub-modules, all green. Overall system status is normal; last build 23 May 10:22 (v1.11.0) for the testing engineering.</p>
+          <span className="font-bold text-slate-800 dark:text-white">
+            System module · {systemOverview?.system_health.label ?? "unknown"} · {systemOverview?.system_health.window_days ?? 0}d
+          </span>
+          <p className="mt-0.5">
+            {totalServices} backend diagnostic services loaded. Last scheduler activity{" "}
+            {latestDiagnosticRun ? formatAdminDate(latestDiagnosticRun, true) : "not available"}.
+          </p>
         </div>
       </div>
 
@@ -2698,43 +3007,49 @@ function SystemView({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Uptime - 24h</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">99.98%</span>
-          <span className="text-[10px] text-emerald-500 font-bold block">normal - no incidents</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{formatPercent(systemOverview?.system_health.percentage)}</span>
+          <span className="text-[10px] text-emerald-500 font-bold block">{systemOverview?.system_health.label ?? "unknown"} system health</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Services status</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">12 / 12</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">normal - audit server channel</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{healthyServices} / {totalServices}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">database + scheduler diagnostics</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Active sessions</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">14</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">8 staff · 4 admin · 2 IMT</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{systemOverview?.active_sessions.total ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">
+            {systemOverview?.active_sessions.staff ?? 0} staff · {systemOverview?.active_sessions.admin ?? 0} admin · {systemOverview?.active_sessions.imt ?? 0} IMT
+          </span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Pending transmission</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">3</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">1 staff · 2 admin queue</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{systemOverview?.pending_transmission_count ?? 0}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">live backend transmission queue</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Questions bank - active</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">42</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">locked - 10 Jul</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{questionTotal}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">
+            {questionRegistry?.current_version?.version_id ?? "No version"} active
+          </span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Threshold limits</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">7</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">seven parameters custom</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{thresholdRows.length}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">live threshold rules from backend</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
-          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Compliance - 55d</span>
-          <span className="text-2xl font-black text-[var(--brand-color)]">PASS</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">full - 22/03/24 - 10:42</span>
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Compliance - {systemOverview?.system_health.window_days ?? 0}d</span>
+          <span className="text-2xl font-black text-[var(--brand-color)]">{String(systemOverview?.reverse_scoring_status ?? "—").toUpperCase()}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">reverse scoring state</span>
         </div>
         <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
-          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Last backup</span>
-          <span className="text-2xl font-black text-slate-800 dark:text-white">—</span>
-          <span className="text-[10px] text-slate-400 font-semibold block">no pending updates</span>
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Last diagnostics run</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white">{latestDiagnosticRun ? formatCompactDate(latestDiagnosticRun) : "—"}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">
+            AI provider {systemDiagnostics?.ai_provider_configured ? "configured" : "not configured"}
+          </span>
         </div>
       </div>
 
@@ -2746,10 +3061,14 @@ function SystemView({
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-white">Services - status</h3>
-              <p className="text-[10px] text-slate-500 mt-0.5">Unit · geolocations client · base band</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Database and scheduled job health from live diagnostics.</p>
             </div>
-            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded">
-              All active
+            <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+              healthyServices === totalServices
+                ? "bg-emerald-500/10 text-emerald-500"
+                : "bg-amber-500/10 text-amber-500"
+            }`}>
+              {healthyServices === totalServices ? "All active" : `${totalServices - healthyServices} attention`}
             </span>
           </div>
 
@@ -2766,24 +3085,7 @@ function SystemView({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-sans">
                 {adminStore.services.map((srv: ServiceStatus) => (
-                  <tr
-                    key={srv.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Toggle status for ${srv.name}`}
-                    onClick={() => {
-                      adminStore.toggleServiceStatus(srv.id);
-                      setLocalSystemChanged(true);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        adminStore.toggleServiceStatus(srv.id);
-                        setLocalSystemChanged(true);
-                      }
-                    }}
-                    className="align-middle hover:bg-slate-50 dark:hover:bg-slate-900/60 cursor-pointer transition-colors duration-150"
-                  >
+                  <tr key={srv.id} className="align-middle">
                     <td className="py-3 font-bold text-slate-800 dark:text-white">{srv.name}</td>
                     <td className="py-3">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold select-none ${
@@ -2809,10 +3111,10 @@ function SystemView({
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-white">Threshold rates</h3>
-              <p className="text-[10px] text-slate-500 mt-0.5">Country, confidence, and cohort minimums.</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Live threshold rules returned by the admin system overview API.</p>
             </div>
             <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 text-slate-500 text-[10px] font-bold rounded">
-              R1.1 / 2a
+              {thresholdRows.length} rules
             </span>
           </div>
 
@@ -2826,21 +3128,20 @@ function SystemView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                {[
-                  { rate: "Cohort minimum (k)", val: "5", applies: "All aggregate views" },
-                  { rate: "Severity L2 trigger", val: "Δ -1.0 v 7d", applies: "Driver alerts" },
-                  { rate: "Severity L3 trigger", val: "Δ -2.0 / 7d", applies: "Driver alerts" },
-                  { rate: "Severity L4 trigger", val: "L4 gating event", applies: "Safety pathway" },
-                  { rate: "Confidence limit", val: "> 80%", applies: "OPS input" },
-                  { rate: "Deactivation grace", val: "14 days", applies: "Inactive accounts" },
-                  { rate: "Export approval window", val: "12h", applies: "All clinical exports" },
-                ].map((row, idx) => (
-                  <tr key={idx} className="align-middle">
+                {thresholdRows.map((row) => (
+                  <tr key={row.rate} className="align-middle">
                     <td className="py-2.5 font-bold text-slate-800 dark:text-white">{row.rate}</td>
                     <td className="py-2.5 text-center font-mono font-bold text-[var(--brand-color)]">{row.val}</td>
                     <td className="py-2.5 text-right text-slate-500 dark:text-slate-400">{row.applies}</td>
                   </tr>
                 ))}
+                {thresholdRows.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="py-6 text-center text-slate-400">
+                      Threshold rules were not returned by the backend.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -2853,9 +3154,11 @@ function SystemView({
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
           <div>
             <h3 className="text-sm font-bold text-slate-800 dark:text-white">Deactivation queue · {deactivations.length}</h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Candidates to be reassigned before status is changed.</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Admin-initiated and self-service deactivation requests from the backend queue.</p>
           </div>
-          <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[10px] font-bold rounded">
+          <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+            deactivations.length > 0 ? "bg-amber-500/10 text-amber-500" : "bg-emerald-500/10 text-emerald-500"
+          }`}>
             {deactivations.length} items
           </span>
         </div>
@@ -2889,14 +3192,21 @@ function SystemView({
                   <td className="py-3.5 font-bold text-slate-800 dark:text-slate-300">{row.reassign}</td>
                   <td className="py-3.5 text-right">
                     <button
-                      onClick={() => handleResolveDeactivation(row.id)}
+                      onClick={() => triggerToast("Review deactivation actions from the live admin workflow.")}
                       className="px-3 py-1 bg-slate-100 hover:bg-[var(--brand-color)] hover:text-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-[10px] font-bold cursor-pointer transition"
                     >
-                      Resolve
+                      Review
                     </button>
                   </td>
                 </tr>
               ))}
+              {deactivations.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-slate-400">
+                    No pending deactivation requests were returned by the backend.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -2918,39 +3228,41 @@ function SystemView({
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ASSIGNED</span>
-              <p className="font-bold text-slate-800 dark:text-white">14 active</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Providers with active workload.</p>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.accountsSummary?.account_status.active_count ?? 0} active</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Live account status summary from backend.</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">WITHDRAWN CONSENT</span>
-              <p className="font-bold text-slate-800 dark:text-white">1 Purpose · 0 Mental</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Access removed immediately.</p>
+              <p className="font-bold text-slate-800 dark:text-white">
+                {adminStore.accountsSummary?.purpose_consent.withdrawn_count ?? 0} withdrawn
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Purpose consent withdrawal count in backend summary.</p>
             </div>
           </div>
 
           <div className="space-y-4">
             <div className="space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">UNASSIGNED</span>
-              <p className="font-bold text-slate-800 dark:text-white">2</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Providers redundant.</p>
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">EXPIRING SOON</span>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.accountsSummary?.access_expiration.expiring_soon_30d_count ?? 0}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Accounts expiring within the next 30 days.</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">AGGREGATE ONLY</span>
-              <p className="font-bold text-slate-800 dark:text-white">Leadership · 3</p>
-              <p className="text-[10px] text-slate-500 leading-normal">k &ge; 5 enforced · no individual.</p>
+              <p className="font-bold text-slate-800 dark:text-white">Leadership · k &ge; {systemOverview?.privacy_cohort_suppression.leadership_k ?? 0}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Cohort suppression boundary enforced by backend config.</p>
             </div>
           </div>
 
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">EXPIRED</span>
-              <p className="font-bold text-slate-800 dark:text-white">0</p>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.accountsSummary?.access_expiration.expired_count ?? 0}</p>
               <p className="text-[10px] text-slate-600 leading-normal">Accounts past access expiration.</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ADMIN & PROTECTED ROLES</span>
-              <p className="font-bold text-slate-800 dark:text-white">5</p>
-              <p className="text-[10px] text-slate-600 leading-normal">2nd reviewer sign-off.</p>
+              <p className="font-bold text-slate-800 dark:text-white">{roleProtectionCount}</p>
+              <p className="text-[10px] text-slate-600 leading-normal">Officer and system clusters requiring stricter handling.</p>
             </div>
           </div>
         </div>
@@ -2972,41 +3284,43 @@ function SystemView({
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">APPROVED REGISTRY</span>
-              <p className="font-bold text-slate-800 dark:text-white">46 in Contract Question Registry</p>
-              <p className="text-[10px] text-slate-500 leading-normal">O1–O20 + D1–D6 + W1–W10 + M1–M10</p>
+              <p className="font-bold text-slate-800 dark:text-white">{questionTotal} in Contract Question Registry</p>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                O {questionRegistry?.onboarding.length ?? 0} · D {questionRegistry?.daily.length ?? 0} · W {questionRegistry?.weekly.length ?? 0} · M {questionRegistry?.monthly.length ?? 0}
+              </p>
             </div>
             <div className="space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">REGISTRY SCORE</span>
-              <p className="font-bold text-slate-800 dark:text-white">Engine behavior</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Higher score = lower stress (stress).</p>
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">CURRENT VERSION</span>
+              <p className="font-bold text-slate-800 dark:text-white">{questionRegistry?.current_version?.version_id ?? "—"}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Effective {formatCompactDate(questionRegistry?.current_version?.effective_date ?? null)}</p>
             </div>
             <div className="space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">HIGH MEDICINE WATCH</span>
-              <p className="font-bold text-slate-800 dark:text-white">High Medicine Watch</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Default visibility · k &ge; 5.</p>
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">PATHWAY MATRIX</span>
+              <p className="font-bold text-slate-800 dark:text-white">{adminStore.pathwayMatrix.length} pathways</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Approval and enablement rows loaded from backend.</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">ACTIVE</span>
-              <p className="font-bold text-slate-800 dark:text-white">Active</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Same active database across all spaces.</p>
+              <p className="font-bold text-slate-800 dark:text-white">{questionVersionCount} versions tracked</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Question-bank version history returned by the admin API.</p>
             </div>
           </div>
 
           <div className="space-y-4">
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">REVERSE-SCORING</span>
-              <p className="font-bold text-slate-800 dark:text-white">Engine behavior</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Higher score = lower stress (stress).</p>
+              <p className="font-bold text-slate-800 dark:text-white">{systemOverview?.reverse_scoring_status ?? "—"}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Current backend scoring mode.</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">RECOMMENDATION DATA</span>
-              <p className="font-bold text-slate-800 dark:text-white">Plugged in audit</p>
-              <p className="text-[10px] text-slate-500 leading-normal">Surfaces "+" value when data loading.</p>
+              <p className="font-bold text-slate-800 dark:text-white">{thresholdRules?.confidence_rule ?? "—"}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Confidence rule currently enforced for recommendation logic.</p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">SCHEMA</span>
               <p className="font-bold text-slate-800 dark:text-white">Deterministic · versioned</p>
-              <p className="text-[10px] text-slate-500 leading-normal">For Outcomes O1–O20.</p>
+              <p className="text-[10px] text-slate-500 leading-normal">{questionVersionCount} backend versions available for admin review.</p>
             </div>
           </div>
         </div>
@@ -3017,43 +3331,43 @@ function SystemView({
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
           <div>
             <h3 className="text-sm font-bold text-slate-800 dark:text-white">Hours tracking - contract targets</h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">SCS hours &ge; 2,800 · PT/IM hours &ge; 512 · 98% coverage · reduced coverage · RSD coverage (caseload)</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">RSD coverage and utilization activity from backend event history.</p>
           </div>
           <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase">
-            99% target
+            {systemOverview?.rsd_coverage.session_count ?? 0} sessions
           </span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-xs leading-normal">
           <div className="space-y-1">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">SCS YTD</span>
-            <p className="font-bold text-slate-800 dark:text-white">1,120 / 2,800</p>
-            <p className="text-[10px] text-slate-500">SCS - caseworker.</p>
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">RSD HOURS</span>
+            <p className="font-bold text-slate-800 dark:text-white">{systemOverview?.rsd_coverage.total_rsd_hours ?? 0} hrs</p>
+            <p className="text-[10px] text-slate-500">Backend coverage hours for {systemOverview?.rsd_coverage.year ?? "—"}.</p>
           </div>
           <div className="space-y-1">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">PT/IM YTD</span>
-            <p className="font-bold text-slate-800 dark:text-white">340 / 512</p>
-            <p className="text-[10px] text-[var(--brand-color)] font-semibold">66% - on pace.</p>
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">UTILIZATION EVENTS</span>
+            <p className="font-bold text-slate-800 dark:text-white">{usedUtilizationEvents} / {totalUtilizationEvents}</p>
+            <p className="text-[10px] text-[var(--brand-color)] font-semibold">actual use versus events offered.</p>
           </div>
           <div className="space-y-1">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">WEEKLY COVERAGE</span>
-            <p className="font-bold text-slate-800 dark:text-white">R</p>
-            <p className="text-[10px] text-slate-500">3 due in zone · 6 due in system.</p>
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">AVG ATTENDANCE</span>
+            <p className="font-bold text-slate-800 dark:text-white">{averageAttendance}</p>
+            <p className="text-[10px] text-slate-500">Average attendees across utilization events.</p>
           </div>
           <div className="space-y-1">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">CORRECTIVE ACTION</span>
-            <p className="font-bold text-slate-800 dark:text-white">Plan role</p>
-            <p className="text-[10px] text-slate-600">Re-allocate 3 hours coverage.</p>
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">STAFF LEADS</span>
+            <p className="font-bold text-slate-800 dark:text-white">{distinctStaffLeads}</p>
+            <p className="text-[10px] text-slate-600">Distinct staff leads recorded in utilization history.</p>
           </div>
         </div>
 
         <div className="pt-4 border-t border-slate-100 dark:border-white/5 flex items-center justify-between">
           <div className="space-y-0.5">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">RSD coverage (caseload)</span>
-            <p className="text-[10px] text-slate-500 leading-normal">Restricted status duty and hours tracked separately from regular hours.</p>
+            <p className="text-[10px] text-slate-500 leading-normal">Restricted status duty coverage is tracked separately from utilization event history.</p>
           </div>
           <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[10px] font-bold rounded uppercase">
-            98% YTD
+            {systemOverview?.inactive_accounts_count ?? 0} inactive accounts
           </span>
         </div>
       </div>
@@ -3073,18 +3387,18 @@ function SystemView({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-xs leading-normal">
           <div className="space-y-1">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">COHORT SIZE</span>
-            <p className="font-bold text-slate-800 dark:text-white">k &ge; 5 enforced</p>
+            <p className="font-bold text-slate-800 dark:text-white">k &ge; {systemOverview?.privacy_cohort_suppression.leadership_k ?? 0} enforced</p>
             <p className="text-[10px] text-slate-500">No individual identifiers · flight/scenario only.</p>
           </div>
           <div className="space-y-1">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">LEADERSHIP EXPORTS</span>
-            <p className="font-bold text-slate-800 dark:text-white">Suppress or inherited</p>
-            <p className="text-[10px] text-slate-500">PII suppressed at boundary.</p>
+            <p className="font-bold text-slate-800 dark:text-white">{adminStore.exportsOverview?.available_reports.length ?? 0} report types</p>
+            <p className="text-[10px] text-slate-500">Sensitivity and report availability are read from the backend export overview.</p>
           </div>
           <div className="space-y-1">
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">CELL SUPPRESSION</span>
-            <p className="font-bold text-slate-800 dark:text-white">k &lt; 5 &rarr; "—"</p>
-            <p className="text-[10px] text-slate-500">No approximation or merging.</p>
+            <p className="font-bold text-slate-800 dark:text-white">k &lt; {systemOverview?.privacy_cohort_suppression.leadership_k ?? 0} &rarr; "—"</p>
+            <p className="text-[10px] text-slate-500">Suppression threshold stays aligned with backend cohort policy.</p>
           </div>
         </div>
       </div>
@@ -3093,8 +3407,8 @@ function SystemView({
       <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-white">9 operational queues</h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Provider coverage · support · corrective actions · IDMT/documentation handoffs · medical-access audit · retention/disposition · export audit · equipment gaps · Fly Away Kit</p>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-white">{operationalQueues.length} operational queues</h3>
+            <p className="text-[10px] text-slate-500 mt-0.5">Queues derived from confirmations, deactivations, exports, equipment, credentials, and utilization events.</p>
           </div>
           <span className="px-2 py-0.5 bg-[var(--brand-color)/10] text-[var(--brand-color)] text-[9px] font-bold rounded uppercase">
             Each with assignment/status/due/resolution/closure/audit
@@ -3115,18 +3429,8 @@ function SystemView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {[
-                { queue: "Provider coverage", assignment: "Plan role", status: "2 open", statusType: "orange", due: "31 Jul", resolution: "Nutritionist slot", closure: "—", audit: "Pending" },
-                { queue: "Support", assignment: "Plan role", status: "4 open", statusType: "cyan", due: "Rolling 7d", resolution: "Operator support tickets", closure: "—", audit: "Pending" },
-                { queue: "Corrective actions", assignment: "SCS Lead", status: "3 open", statusType: "orange", due: "15 Aug", resolution: "Missed-coverage follow-ups", closure: "—", audit: "Pending" },
-                { queue: "IDMT/documentation handoffs", assignment: "PT/IM + IDMT", status: "All cleared", statusType: "green", due: "Weekly", resolution: "Last 7d: 0 stuck", closure: "27 Jul", audit: "Logged" },
-                { queue: "Medical-access audit", assignment: "Admin audit", status: REPORT_STATUSES.PASS, statusType: "green", due: "Weekly", resolution: "No anomalies", closure: "27 Jul", audit: "Logged" },
-                { queue: "Retention/disposition", assignment: "Admin audit", status: "2 scheduled", statusType: "cyan", due: "31 Jul", resolution: "7-yr retention sweep", closure: "—", audit: "Pending" },
-                { queue: "Export audit", assignment: "Admin audit", status: REPORT_STATUSES.PASS, statusType: "green", due: "Daily", resolution: "All exports have reason", closure: "27 Jul", audit: "Logged" },
-                { queue: "Equipment gaps", assignment: "SCS Lead", status: "1 open", statusType: "orange", due: "10 Aug", resolution: "Tempo lane · lane 3 sensor", closure: "—", audit: "Pending" },
-                { queue: "Fly Away Kit", assignment: "SCS Lead", status: "Inventory OK", statusType: "green", due: "Monthly", resolution: "Last checked 26 Jul", closure: "26 Jul", audit: "Logged" },
-              ].map((row, idx) => (
-                <tr key={idx} className="align-middle">
+              {operationalQueues.map((row) => (
+                <tr key={row.queue} className="align-middle">
                   <td className="py-3.5 font-bold text-slate-800 dark:text-white">{row.queue}</td>
                   <td className="py-3.5 text-slate-600 dark:text-slate-300">{row.assignment}</td>
                   <td className="py-3.5">
@@ -3163,40 +3467,10 @@ function SystemView({
 
       {/* FOOTER */}
       <div className="flex items-center justify-between text-[10px] text-slate-400 pt-4 border-t border-slate-100 dark:border-white/5 select-none font-mono">
-        <span>Ascend · Admin · System · v1.0 · 99.98% uptime</span>
+        <span>
+          Ascend · Admin · System · v1.0 · {formatPercent(systemOverview?.system_health.percentage)} uptime
+        </span>
       </div>
-
-      {/* SYSTEM CONFIRM BOTTOM BAR */}
-      {localSystemChanged && (
-        <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] text-white p-4 border-t border-slate-800 flex items-center justify-between z-40 animate-slide-up shadow-2xl">
-          <div className="flex flex-col gap-0.5 max-w-2xl text-left font-sans">
-            <span className="text-xs font-bold flex items-center gap-2">
-              <AlertTriangle className="size-4 text-amber-500 flex-shrink-0" />
-              This config change affects all roles globally
-            </span>
-            <span className="text-[11px] text-slate-500 pl-6">
-              Threshold rule update requires 2nd reviewer sign-off. Reversible through the audit log.
-            </span>
-          </div>
-          <div className="flex gap-3 font-sans">
-            <button
-              onClick={() => {
-                setLocalSystemChanged(false);
-                triggerToast("System changes discarded.");
-              }}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirmChanges}
-              className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color)/90] text-white rounded-xl text-xs font-semibold shadow-md cursor-pointer"
-            >
-              Confirm change
-            </button>
-          </div>
-        </div>
-      )}
 
     </div>
   );

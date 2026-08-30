@@ -7,6 +7,7 @@ import {
   Stethoscope,
   Landmark,
   Brain,
+  ClipboardPlus,
   type LucideIcon,
 } from "lucide-react";
 
@@ -18,7 +19,8 @@ export type RoleId =
   | "nutritionist"
   | "mp"
   | "pt-im"
-  | "scs";
+  | "scs"
+  | "idmt";
 
 export type RoleDefinition = {
   id: RoleId;
@@ -39,6 +41,7 @@ export const roles: RoleDefinition[] = [
   { id: "mp", name: "MP", icon: Brain, description: "Mental performance coaching and readiness" },
   { id: "pt-im", name: "PT/IM", icon: Stethoscope, description: "Physical therapy and readiness" },
   { id: "scs", name: "SCS", icon: Landmark, description: "Support command services" },
+  { id: "idmt", name: "IDMT", icon: ClipboardPlus, description: "Independent duty medical technician handoffs" },
 ];
 
 export const roleIds: RoleId[] = roles.map((r) => r.id);

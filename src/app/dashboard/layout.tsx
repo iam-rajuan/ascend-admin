@@ -11,7 +11,7 @@ const SHARED_DASHBOARD_ROUTES = ["profile"];
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, currentUserRole } = useAuthStore();
+  const { isAuthenticated, currentUserRole, isHydrated, isLoading } = useAuthStore();
   const [hasMounted, setHasMounted] = useState(false);
 
   useEffect(() => {
@@ -20,6 +20,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!hasMounted) return;
+
+    if (!isHydrated || isLoading) {
+      return;
+    }
 
     if (!isAuthenticated) {
       router.replace("/");
@@ -32,13 +36,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (currentUserRole && segment !== currentUserRole) {
       router.replace(`/dashboard/${currentUserRole}`);
     }
-  }, [hasMounted, isAuthenticated, currentUserRole, pathname, router]);
+  }, [hasMounted, isAuthenticated, currentUserRole, isHydrated, isLoading, pathname, router]);
 
   const segment = pathname.split("/")[2] ?? "";
   const isRoleMismatch =
     !SHARED_DASHBOARD_ROUTES.includes(segment) && currentUserRole && segment !== currentUserRole;
 
-  if (!hasMounted || !isAuthenticated || isRoleMismatch) {
+  if (!hasMounted || !isHydrated || isLoading || !isAuthenticated || isRoleMismatch) {
     return null; // Prevents flashing content while redirecting
   }
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { AuthBootstrap } from "@/components/auth/auth-bootstrap";
 import { siteConfig } from "@/config/site";
 import "./globals.css";
 
@@ -36,6 +37,7 @@ export default function RootLayout({
         <meta name="darkreader-lock" content="true" />
       </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
+        <AuthBootstrap />
         {children}
       </body>
     </html>

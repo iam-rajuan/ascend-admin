@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const clientEnvSchema = z.object({
-  NEXT_PUBLIC_API_BASE_URL: z.string().url().default("http://localhost:4000/api"),
+  NEXT_PUBLIC_API_BASE_URL: z.string().url().default("https://monorail-lagoon-pettiness.ngrok-free.dev/api/v1"),
   NEXT_PUBLIC_APP_NAME: z.string().min(1).default("Ascend Admin"),
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 });

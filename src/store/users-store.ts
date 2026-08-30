@@ -2,190 +2,219 @@
 
 import { create } from "zustand";
 import type { RoleId } from "@/lib/roles";
+import {
+  assignAdminUserUnit,
+  changeAdminUserRole,
+  createAdminUser,
+  formatAdminApiError,
+  getAdminUsers,
+  renewAdminUserAccess,
+  requestAdminUserDeactivation,
+  resetAdminUserPassword,
+  toAdminRoleLabel,
+  type AdminUserRecord,
+} from "@/lib/admin-api";
+import { normalizeRole } from "@/lib/staff-api";
 
 export type AccountStatus = "active" | "deactivated";
 
 export type Person = {
   id: string;
   name: string;
-  email: string; // stored lowercase
-  password: string; // PLAINTEXT — prototype only, no backend to hash against
+  email: string;
   role: RoleId;
+  roleLabel: string;
   unit: string;
   status: AccountStatus;
   lastEdit: string;
+  createdAt: string | null;
+  accessExpiresAt: string | null;
 };
 
 export type NewPersonInput = {
   name: string;
   email: string;
-  password: string;
+  password?: string;
   role: RoleId;
   unit: string;
   status: AccountStatus;
 };
 
-export type CredentialsResult = Person | "invalid" | "deactivated";
+type MutationResult = {
+  ok: boolean;
+  error?: string;
+};
+
+type AddPersonResult = MutationResult & {
+  person?: Person;
+  initialPassword?: string | null;
+};
+
+type ResetPasswordResult = MutationResult & {
+  emailed?: boolean;
+};
 
 type UsersStore = {
   people: Person[];
-  addPerson: (input: NewPersonInput) => Person;
-  updatePerson: (id: string, updates: Partial<NewPersonInput>) => void;
-  setStatus: (id: string, status: AccountStatus) => void;
-  adminResetPassword: (id: string) => string | null;
-  resetPassword: (email: string, newPassword: string) => boolean;
-  changePassword: (id: string, currentPassword: string, newPassword: string) => boolean;
-  verifyCredentials: (email: string, password: string) => CredentialsResult;
+  isLoading: boolean;
+  error: string;
+  fetchPeople: (accessToken: string, role?: RoleId | "All") => Promise<MutationResult>;
+  addPerson: (accessToken: string, input: NewPersonInput) => Promise<AddPersonResult>;
+  updatePerson: (accessToken: string, id: string, updates: Partial<NewPersonInput>) => Promise<MutationResult>;
+  setStatus: (accessToken: string, id: string, status: AccountStatus) => Promise<MutationResult>;
+  adminResetPassword: (accessToken: string, id: string) => Promise<ResetPasswordResult>;
   findByEmail: (email: string) => Person | undefined;
   getByRole: (role: RoleId) => Person[];
 };
 
-// Bumped to v3 to invalidate any previously cached directory (old seed
-// emails/passwords, or the now-removed "mt" role) still sitting in a
-// browser's localStorage.
-const STORAGE_KEY = "ascend_people_directory_v3";
-
-const nowStamp = () =>
-  new Date().toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric" });
-
-const seedPeople: Person[] = [
-  { id: "usr-1", name: "Lead Admin", email: "admin@g.com", password: "12345678", role: "admin", unit: "OPS Global", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-2", name: "TSgt Marcus Lee", email: "scs@g.com", password: "12345678", role: "scs", unit: "23rd SFS", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-3", name: "Capt. Elena Ruiz", email: "pt-im@g.com", password: "12345678", role: "pt-im", unit: "PT/IM Clinic", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-4", name: "Dana Whitfield", email: "nutritionist@g.com", password: "12345678", role: "nutritionist", unit: "Nutrition Services", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-5", name: "Dr. Sam Okafor", email: "mp@g.com", password: "12345678", role: "mp", unit: "Mental Performance", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-6", name: "Chaplain Rivera", email: "pc@g.com", password: "12345678", role: "pc", unit: "Purpose Readiness", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-7", name: "MSgt Alicia Chen", email: "plan@g.com", password: "12345678", role: "plan", unit: "Plans & Scheduling", status: "active", lastEdit: "22 Jul 2026" },
-  { id: "usr-8", name: "Col. David Park", email: "leadership@g.com", password: "12345678", role: "leadership", unit: "Wing Command", status: "active", lastEdit: "22 Jul 2026" },
-];
-
-const getInitialPeople = (): Person[] => {
-  if (typeof window !== "undefined") {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {
-        // fall through to seed data
-      }
-    }
+function formatStamp(value: string | null | undefined) {
+  if (!value) {
+    return "—";
   }
-  return seedPeople;
-};
 
-const persist = (people: Person[]) => {
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(people));
-  }
-};
+  return new Date(value).toLocaleDateString("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
 
-const genId = () => `usr-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-
-const genTempPassword = () => Math.random().toString(36).slice(-8);
+function mapUserToPerson(user: AdminUserRecord): Person {
+  return {
+    id: user.id,
+    name: user.full_name,
+    email: user.email.trim().toLowerCase(),
+    role: normalizeRole(user.role),
+    roleLabel: user.role,
+    unit: user.unit_id ?? "",
+    status: user.is_active ? "active" : "deactivated",
+    lastEdit: formatStamp(user.last_edit_at || user.created_at),
+    createdAt: user.created_at ?? null,
+    accessExpiresAt: user.access_expires_at ?? null,
+  };
+}
 
 export const useUsersStore = create<UsersStore>((set, get) => ({
-  people: getInitialPeople(),
+  people: [],
+  isLoading: false,
+  error: "",
+  fetchPeople: async (accessToken, role) => {
+    set({ isLoading: true, error: "" });
 
-  addPerson: (input) => {
-    const person: Person = {
-      id: genId(),
-      name: input.name,
-      email: input.email.trim().toLowerCase(),
-      password: input.password,
-      role: input.role,
-      unit: input.unit,
-      status: input.status,
-      lastEdit: nowStamp(),
-    };
-    set((state) => {
-      const people = [...state.people, person];
-      persist(people);
-      return { people };
-    });
-    return person;
-  },
-
-  updatePerson: (id, updates) => {
-    set((state) => {
-      const people = state.people.map((p) =>
-        p.id === id
-          ? {
-              ...p,
-              ...updates,
-              email: updates.email ? updates.email.trim().toLowerCase() : p.email,
-              lastEdit: nowStamp(),
-            }
-          : p
+    try {
+      const response = await getAdminUsers(
+        accessToken,
+        role && role !== "All" ? toAdminRoleLabel(role) : undefined,
       );
-      persist(people);
-      return { people };
-    });
-  },
 
-  setStatus: (id, status) => {
-    set((state) => {
-      const people = state.people.map((p) =>
-        p.id === id ? { ...p, status, lastEdit: nowStamp() } : p
-      );
-      persist(people);
-      return { people };
-    });
-  },
+      set({
+        people: response.users.map(mapUserToPerson),
+        isLoading: false,
+      });
 
-  adminResetPassword: (id) => {
-    const person = get().people.find((p) => p.id === id);
-    if (!person) return null;
-    const newPassword = genTempPassword();
-    set((state) => {
-      const people = state.people.map((p) =>
-        p.id === id ? { ...p, password: newPassword, lastEdit: nowStamp() } : p
-      );
-      persist(people);
-      return { people };
-    });
-    return newPassword;
+      return { ok: true };
+    } catch (error) {
+      const message = formatAdminApiError(error);
+      set({ isLoading: false, error: message });
+      return { ok: false, error: message };
+    }
   },
+  addPerson: async (accessToken, input) => {
+    try {
+      const created = await createAdminUser(accessToken, {
+        full_name: input.name.trim(),
+        email: input.email.trim().toLowerCase(),
+        role: toAdminRoleLabel(input.role),
+        unit_id: input.unit.trim() || null,
+        is_active: input.status === "active",
+        initial_password: input.password?.trim() || undefined,
+      });
 
-  resetPassword: (email, newPassword) => {
-    const normalized = email.trim().toLowerCase();
-    const person = get().people.find((p) => p.email === normalized);
-    if (!person) return false;
-    set((state) => {
-      const people = state.people.map((p) =>
-        p.email === normalized ? { ...p, password: newPassword, lastEdit: nowStamp() } : p
-      );
-      persist(people);
-      return { people };
-    });
-    return true;
+      const person = mapUserToPerson(created);
+      set((state) => ({
+        people: [person, ...state.people],
+      }));
+
+      return {
+        ok: true,
+        person,
+        initialPassword: created.initial_password ?? null,
+      };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
+    }
   },
+  updatePerson: async (accessToken, id, updates) => {
+    const current = get().people.find((person) => person.id === id);
+    if (!current) {
+      return { ok: false, error: "Person not found." };
+    }
 
-  changePassword: (id, currentPassword, newPassword) => {
-    const person = get().people.find((p) => p.id === id);
-    if (!person || person.password !== currentPassword) return false;
-    set((state) => {
-      const people = state.people.map((p) =>
-        p.id === id ? { ...p, password: newPassword, lastEdit: nowStamp() } : p
-      );
-      persist(people);
-      return { people };
-    });
-    return true;
+    if (updates.name && updates.name.trim() !== current.name) {
+      return { ok: false, error: "The admin API does not expose name edits in this dashboard contract." };
+    }
+
+    if (updates.email && updates.email.trim().toLowerCase() !== current.email) {
+      return { ok: false, error: "The admin API does not expose email edits in this dashboard contract." };
+    }
+
+    try {
+      if (updates.role && updates.role !== current.role) {
+        await changeAdminUserRole(accessToken, id, toAdminRoleLabel(updates.role));
+      }
+
+      if (typeof updates.unit === "string" && updates.unit !== current.unit) {
+        await assignAdminUserUnit(accessToken, id, updates.unit.trim() || null);
+      }
+
+      if (updates.status && updates.status !== current.status) {
+        if (updates.status === "active") {
+          await renewAdminUserAccess(accessToken, id);
+        } else {
+          await requestAdminUserDeactivation(accessToken, id, "Requested from admin dashboard.");
+        }
+      }
+
+      const refreshed = await get().fetchPeople(accessToken);
+      if (!refreshed.ok) {
+        return refreshed;
+      }
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
+    }
   },
+  setStatus: async (accessToken, id, status) => {
+    try {
+      if (status === "active") {
+        await renewAdminUserAccess(accessToken, id);
+      } else {
+        await requestAdminUserDeactivation(accessToken, id, "Requested from admin dashboard.");
+      }
 
-  verifyCredentials: (email, password) => {
-    const normalized = email.trim().toLowerCase();
-    const person = get().people.find((p) => p.email === normalized);
-    if (!person || person.password !== password) return "invalid";
-    if (person.status === "deactivated") return "deactivated";
-    return person;
+      const refreshed = await get().fetchPeople(accessToken);
+      if (!refreshed.ok) {
+        return refreshed;
+      }
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
+    }
   },
-
+  adminResetPassword: async (accessToken, id) => {
+    try {
+      const response = await resetAdminUserPassword(accessToken, id);
+      await get().fetchPeople(accessToken);
+      return { ok: true, emailed: response.emailed ?? true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
+    }
+  },
   findByEmail: (email) => {
     const normalized = email.trim().toLowerCase();
-    return get().people.find((p) => p.email === normalized);
+    return get().people.find((person) => person.email === normalized);
   },
-
-  getByRole: (role) => get().people.filter((p) => p.role === role),
+  getByRole: (role) => get().people.filter((person) => person.role === role),
 }));

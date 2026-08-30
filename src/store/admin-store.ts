@@ -1,6 +1,57 @@
 "use client";
 
 import { create } from "zustand";
+import {
+  approveAdminConfirmation,
+  formatAdminApiError,
+  getAdminAccountsOnboardingSummary,
+  getAdminAuditCategoryRollup,
+  getAdminAuditLog,
+  getAdminAuditStats,
+  getAdminCredentials,
+  getAdminEquipmentGaps,
+  getAdminExportLogHistory,
+  getAdminExportsOverview,
+  getAdminOrgUnits,
+  getAdminPathwayMatrix,
+  getAdminQuestionBankVersions,
+  getAdminQuestionRegistry,
+  getAdminRbacMatrix,
+  getAdminRequiredContractReports,
+  getAdminRoleCatalog,
+  getAdminScheduledExports,
+  getAdminScopeConfigs,
+  getAdminScopeMatrix,
+  getAdminSystemDiagnostics,
+  getAdminSystemOverview,
+  getAdminUtilizationEvents,
+  type AdminAccountsOnboardingSummary,
+  type AdminAuditEntry,
+  type AdminAuditRollupCategory,
+  type AdminAuditStats,
+  type AdminConfirmation,
+  type AdminCredential,
+  type AdminEquipmentGap,
+  type AdminExportRecord,
+  type AdminExportsOverview,
+  type AdminOrgUnit,
+  type AdminPathwayMatrixEntry,
+  type AdminQuestionBankVersion,
+  type AdminQuestionRegistryEntry,
+  type AdminQuestionRegistryResponse,
+  type AdminRequiredContractReport,
+  type AdminRbacMatrixResponse,
+  type AdminRoleCatalogEntry,
+  type AdminScheduledExport,
+  type AdminScopeConfig,
+  type AdminScopeMatrixRow,
+  type AdminScopeResolveResponse,
+  type AdminSystemDiagnostics,
+  type AdminSystemOverview,
+  type AdminUtilizationEvent,
+  resolveAdminScope,
+  updateAdminScopeConfig,
+} from "@/lib/admin-api";
 
 export type AdminTab = "overview" | "roles" | "scope" | "audit-log" | "exports" | "system" | "profile";
 
@@ -45,8 +96,6 @@ export type RoleCatalogItem = {
 
 export type RbacMatrixRow = {
   permission: string;
-  // State for each of the 10 roles:
-  // Order: [Operator, SCS, PT/IM, Nutrition, MP, Purpose, Plan, Leadership, Admin, IDMT]
   states: ("active" | "conditional" | "gated" | "locked" | "none")[];
 };
 
@@ -56,6 +105,14 @@ export type DeviceOverrideItem = {
   status: "Online" | "Offline" | "Handshake" | "Secure" | "Unsynced";
   details: string;
   log: string;
+};
+
+type DriverVisibility = {
+  physical: boolean;
+  sleep: boolean;
+  mental: boolean;
+  nutrition: boolean;
+  purpose: boolean;
 };
 
 export type AdminStore = {
@@ -69,27 +126,60 @@ export type AdminStore = {
   auditSearchQuery: string;
   auditFilter: string;
   selectedScopeUnit: string;
+  selectedScopeUnitId: string | null;
   cohortSizeK: number;
   rolesFilter: string;
-  driverVisibility: {
-    physical: boolean;
-    sleep: boolean;
-    mental: boolean;
-    nutrition: boolean;
-    purpose: boolean;
-  };
+  driverVisibility: DriverVisibility;
+  isLoading: boolean;
+  loadError: string;
+  auditEntries: AdminAuditEntry[];
+  auditStats: AdminAuditStats | null;
+  auditRollup: AdminAuditRollupCategory[];
+  roleCatalogRaw: AdminRoleCatalogEntry[];
+  accountsSummary: AdminAccountsOnboardingSummary | null;
+  questionRegistry: AdminQuestionRegistryResponse | null;
+  questionBankVersions: AdminQuestionBankVersion[];
+  scopeConfigs: AdminScopeConfig[];
+  scopeMatrix: AdminScopeMatrixRow[];
+  scopeResolution: AdminScopeResolveResponse | null;
+  pathwayMatrix: AdminPathwayMatrixEntry[];
+  exportsOverview: AdminExportsOverview | null;
+  requiredReports: AdminRequiredContractReport[];
+  scheduledExports: AdminScheduledExport[];
+  exportHistory: AdminExportRecord[];
+  systemOverview: AdminSystemOverview | null;
+  systemDiagnostics: AdminSystemDiagnostics | null;
+  orgUnits: AdminOrgUnit[];
+  credentials: AdminCredential[];
+  equipmentGaps: AdminEquipmentGap[];
+  utilizationEvents: AdminUtilizationEvent[];
   setActiveTab: (tab: AdminTab) => void;
   setAuditSearchQuery: (query: string) => void;
   setAuditFilter: (filter: string) => void;
-  setSelectedScopeUnit: (unit: string) => void;
+  setSelectedScopeUnit: (unitName: string) => void;
+  setSelectedScopeUnitId: (unitId: string | null) => void;
   setCohortSizeK: (k: number) => void;
   setRolesFilter: (filter: string) => void;
-  toggleDriverVisibility: (driver: "physical" | "sleep" | "mental" | "nutrition" | "purpose") => void;
+  toggleDriverVisibility: (driver: keyof DriverVisibility) => void;
   removeConfirmation: (id: string) => void;
   toggleServiceStatus: (id: string) => void;
   toggleRbacCell: (rowIndex: number, colIndex: number) => void;
   updateRoleCount: (roleId: string, value: string) => void;
   addActivity: (entry: { action: string; actor: string; reason?: string; scope: string; tag?: ActivityItem["tag"]; tagColor?: ActivityItem["tagColor"] }) => void;
+  initialize: (accessToken: string) => Promise<void>;
+  refreshScopeResolve: (accessToken: string) => Promise<void>;
+  saveAdminScopeConfig: (accessToken: string) => Promise<{ ok: boolean; error?: string }>;
+  approveConfirmation: (accessToken: string, id: string) => Promise<{ ok: boolean; error?: string }>;
+};
+
+const ADMIN_SCOPE_ROLE = "DWS Admin";
+
+const DRIVER_COMPONENT_MAP: Record<keyof DriverVisibility, string> = {
+  physical: "Physical Readiness",
+  sleep: "Sleep Readiness",
+  mental: "Mental Readiness",
+  nutrition: "Nutritional Readiness",
+  purpose: "Spiritual Readiness",
 };
 
 const getInitialAdminTab = (): AdminTab => {
@@ -99,76 +189,224 @@ const getInitialAdminTab = (): AdminTab => {
       return saved as AdminTab;
     }
   }
+
   return "overview";
 };
 
-export const useAdminStore = create<AdminStore>((set) => ({
+function formatStamp(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+  return date.toLocaleDateString("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
+
+  return new Date(value).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function toRiskCode(riskTier: string | null | undefined): ConfirmationItem["risk"] {
+  switch (riskTier) {
+    case "high":
+      return "L4";
+    case "elevated":
+      return "L3";
+    default:
+      return "L1";
+  }
+}
+
+function toConfirmationAction(actionType: string) {
+  switch (actionType) {
+    case "export":
+      return "Export";
+    case "deactivation":
+      return "Deactivation";
+    case "role_change":
+      return "Role change";
+    case "idmt_handoff":
+      return "IDMT handoff";
+    default:
+      return actionType.replace(/_/g, " ");
+  }
+}
+
+function toConfirmationItem(item: AdminConfirmation): ConfirmationItem {
+  const rowCount = Number(item.payload && typeof item.payload.row_count === "number" ? item.payload.row_count : 0);
+  return {
+    id: item.id,
+    action: toConfirmationAction(item.action_type),
+    target: item.target_summary || item.target_entity_type || "Pending action",
+    consequence: item.consequence_summary || "Awaiting review",
+    scope: item.scope_summary || "Global",
+    records: rowCount,
+    risk: toRiskCode(item.risk_tier),
+  };
+}
+
+function toActivityItem(entry: AdminAuditEntry): ActivityItem {
+  const actor = entry.actor_role || "System";
+  const eventType = entry.event_type.toLowerCase();
+  let tag: ActivityItem["tag"] = "logged";
+  let tagColor: ActivityItem["tagColor"] = "green";
+
+  if (eventType.includes("confirm") || eventType.includes("approve")) {
+    tag = "review";
+    tagColor = "orange";
+  } else if (eventType.includes("config") || eventType.includes("deploy")) {
+    tag = "system";
+    tagColor = "blue";
+  } else if (eventType.includes("deactivation") || eventType.includes("reject")) {
+    tag = "gated";
+    tagColor = "red";
+  }
+
+  return {
+    id: entry.id,
+    time: formatTime(entry.created_at),
+    actor,
+    action: entry.summary_message,
+    reason: entry.event_type,
+    scope: entry.target_entity_type || "audit",
+    tag,
+    tagColor,
+  };
+}
+
+function toServiceStatus(diagnostics: AdminSystemDiagnostics | null): ServiceStatus[] {
+  if (!diagnostics) {
+    return [];
+  }
+
+  const jobs = diagnostics.scheduler_jobs.map((job, index) => ({
+    id: `job-${index}`,
+    name: job.job_name.replace(/_/g, " "),
+    status:
+      job.last_run_status === "success"
+        ? "Online"
+        : job.last_run_status === "warning"
+          ? "Degraded"
+          : "Offline",
+    latency: diagnostics.database.latency_ms ? `${Math.round(diagnostics.database.latency_ms)} ms` : "—",
+    lastCheck: formatTime(job.last_run_at),
+    version: job.last_run_status,
+  })) as ServiceStatus[];
+
+  return [
+    {
+      id: "database",
+      name: "database",
+      status: diagnostics.database.status === "online" ? "Online" : "Offline",
+      latency: `${Math.round(diagnostics.database.latency_ms)} ms`,
+      lastCheck: jobs[0]?.lastCheck || "—",
+      version: diagnostics.ai_provider_configured ? "AI configured" : "AI missing",
+    },
+    ...jobs,
+  ];
+}
+
+function toRoleCatalogEntry(item: AdminRoleCatalogEntry, index: number): RoleCatalogItem {
+  return {
+    id: `rc-${index}`,
+    role: item.role,
+    category: item.cluster,
+    scope: item.scope,
+    assigned: String(item.member_count),
+    lastEdit: formatStamp(item.last_edit),
+  };
+}
+
+function toRbacState(value: string): RbacMatrixRow["states"][number] {
+  switch (value) {
+    case "full":
+      return "active";
+    case "conditional":
+      return "conditional";
+    case "gated":
+      return "gated";
+    default:
+      return "none";
+  }
+}
+
+function toRbacMatrixRows(matrix: AdminRbacMatrixResponse["matrix"]): RbacMatrixRow[] {
+  const keys = ["OPERATOR", "SCS", "PT/IM", "NUTR", "MP", "PURPOSE", "PLAN", "LEAD", "ADMIN", "IDMT"];
+  return matrix.map((row) => ({
+    permission: row.capability,
+    states: keys.map((key) => toRbacState(row.roles[key] || "none")),
+  }));
+}
+
+function toDriverVisibility(config: AdminScopeConfig | null | undefined): DriverVisibility {
+  const visible = new Set(config?.visible_components ?? []);
+  return {
+    physical: visible.has(DRIVER_COMPONENT_MAP.physical),
+    sleep: visible.has(DRIVER_COMPONENT_MAP.sleep),
+    mental: visible.has(DRIVER_COMPONENT_MAP.mental),
+    nutrition: visible.has(DRIVER_COMPONENT_MAP.nutrition),
+    purpose: visible.has(DRIVER_COMPONENT_MAP.purpose),
+  };
+}
+
+const defaultDriverVisibility: DriverVisibility = {
+  physical: true,
+  sleep: true,
+  mental: true,
+  nutrition: true,
+  purpose: true,
+};
+
+export const useAdminStore = create<AdminStore>((set, get) => ({
   activeTab: getInitialAdminTab(),
-  pendingConfirmations: [
-    { id: "conf-1", action: "Export", target: "PT/IM audit (Q3)", consequence: "14 records · restricted", scope: "PT/IM caseload", records: 14, risk: "L4" },
-    { id: "conf-2", action: "Export", target: "Wing weekly PPTX", consequence: "aggregate · kz5", scope: "Aggregate - kz5", records: 125, risk: "L1" },
-    { id: "conf-3", action: "Deactivation", target: "Staff account", consequence: "3 caseloads reassigned", scope: "SCS - flight", records: 22, risk: "L3" },
-  ],
-  recentActivity: [
-    { id: "act-1", time: "07:14:22", actor: "PT/IM", action: "Opened medical record reason: lower-back review", scope: "PT/IM · caseload", tag: "logged", tagColor: "green" },
-    { id: "act-2", time: "06:42:08", actor: "SCS", action: "Opened session note note: SCS - caseload", scope: "SCS · caseload", tag: "logged", tagColor: "green" },
-    { id: "act-3", time: "06:35:51", actor: "SCS", action: "Sent secure message thread #482", scope: "SCS · caseload", tag: "logged", tagColor: "green" },
-    { id: "act-4", time: "22:00:03", actor: "System", action: "Scheduled export completed Wing 03 aggregate - scope kz5", scope: "System · aggregate", tag: "system", tagColor: "gray" },
-    { id: "act-5", time: "14:00:46", actor: "PT/IM", action: "Sent IDMT handoff L4 lower-back clearance", scope: "IDMT - L3 clearance", tag: "review", tagColor: "orange" },
-    { id: "act-6", time: "10:22:17", actor: "Lead Admin", action: "Role assignment changed pending 2nd review", scope: "Admin - reversible", tag: "gated", tagColor: "red" },
-    { id: "act-7", time: "09:58:09", actor: "SCS", action: "Logged in PIV - workstation 4 · session start", scope: "SCS · caseload", tag: "logged", tagColor: "green" },
-    { id: "act-8", time: "08:11:30", actor: "System", action: "Threshold warning Sleep driver Δ -1.2 over 7d · Delta flight flagged", scope: "Auto · advisory", tag: "review", tagColor: "orange" },
-  ],
-  services: [
-    { id: "srv-1", name: "Gaming engine", status: "Online", latency: "32 ms", lastCheck: "06:42", version: "v1.1.2" },
-    { id: "srv-2", name: "Audit service", status: "Online", latency: "18 ms", lastCheck: "06:42", version: "v2.7.0" },
-    { id: "srv-3", name: "Export pipeline", status: "Online", latency: "120 ms", lastCheck: "06:42", version: "v3.0.1" },
-    { id: "srv-4", name: "IMT channel", status: "Online", latency: "28 ms", lastCheck: "06:42", version: "v1.4.5" },
-    { id: "srv-5", name: "Notifications", status: "Degraded", latency: "310 ms", lastCheck: "06:41", version: "v2.5.4" },
-    { id: "srv-6", name: "Identity provider", status: "Online", latency: "55 ms", lastCheck: "06:42", version: "v1.8.9" },
-    { id: "srv-7", name: "Caseload server", status: "Online", latency: "24 ms", lastCheck: "06:42", version: "v2.1.7" },
-  ],
-  rolesCatalog: [
-    { id: "rc-1", role: "Operator", category: "Staff", scope: "Own", assigned: "112", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-2", role: "SCS", category: "Staff", scope: "Flight", assigned: "2", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-3", role: "PT/IM", category: "Staff", scope: "Caseload", assigned: "3", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-4", role: "Nutritionist", category: "Staff", scope: "Caseload", assigned: "1", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-5", role: "MP", category: "Staff", scope: "Caseload", assigned: "1", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-6", role: "Purpose Coach", category: "Staff", scope: "Caseload", assigned: "1", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-7", role: "Plan", category: "Contractor", scope: "Flight", assigned: "2", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-8", role: "Leadership", category: "Contractor", scope: "Global", assigned: "3", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-9", role: "Admin", category: "Officer", scope: "Global", assigned: "3", lastEdit: "22 Jul - 10:22" },
-    { id: "rc-10", role: "IDMT", category: "System", scope: "Caseload", assigned: "—", lastEdit: "22 Jul - 10:22" },
-  ],
-  rbacMatrix: [
-    { permission: "View own dashboard", states: ["active", "active", "active", "active", "active", "active", "active", "active", "active", "locked"] },
-    { permission: "View caseload records", states: ["locked", "active", "gated", "gated", "gated", "gated", "locked", "locked", "active", "gated"] },
-    { permission: "View Authorized Performance Summary", states: ["locked", "conditional", "gated", "conditional", "locked", "locked", "locked", "locked", "active", "conditional"] },
-    { permission: "Send message", states: ["active", "active", "active", "active", "active", "active", "active", "locked", "active", "gated"] },
-    { permission: "Send IDMT handoff", states: ["locked", "locked", "gated", "gated", "locked", "locked", "locked", "locked", "active", "gated"] },
-    { permission: "Author plan", states: ["locked", "active", "active", "active", "active", "active", "active", "locked", "active", "locked"] },
-    { permission: "View aggregate trend", states: ["locked", "conditional", "conditional", "conditional", "conditional", "conditional", "active", "active", "active", "locked"] },
-    { permission: "Run export", states: ["locked", "locked", "locked", "locked", "locked", "locked", "gated", "gated", "active", "locked"] },
-    { permission: "Deactivate user", states: ["locked", "locked", "locked", "locked", "locked", "locked", "locked", "locked", "gated", "locked"] },
-  ],
-  deviceOverrides: [
-    { id: "do-1", operator: "l.admin", status: "Online", details: "Graphite chrome v1.2", log: "Handshake verified" },
-    { id: "do-2", operator: "pt.operator", status: "Secure", details: "CAC/PIV active validation", log: "Active connection" },
-    { id: "do-3", operator: "scs.liaison", status: "Handshake", details: "Awaiting auth sync", log: "Sync scheduled" },
-    { id: "do-4", operator: "clin.audit", status: "Offline", details: "Deactivation sync", log: "Awaiting sync check" },
-  ],
+  pendingConfirmations: [],
+  recentActivity: [],
+  services: [],
+  rolesCatalog: [],
+  rbacMatrix: [],
+  deviceOverrides: [],
   auditSearchQuery: "",
   auditFilter: "All",
-  selectedScopeUnit: "PT/IM - Staff",
+  selectedScopeUnit: "No unit selected",
+  selectedScopeUnitId: null,
   cohortSizeK: 5,
   rolesFilter: "All",
-  driverVisibility: {
-    physical: true,
-    sleep: true,
-    mental: true,
-    nutrition: true,
-    purpose: false,
-  },
+  driverVisibility: defaultDriverVisibility,
+  isLoading: false,
+  loadError: "",
+  auditEntries: [],
+  auditStats: null,
+  auditRollup: [],
+  roleCatalogRaw: [],
+  accountsSummary: null,
+  questionRegistry: null,
+  questionBankVersions: [],
+  scopeConfigs: [],
+  scopeMatrix: [],
+  scopeResolution: null,
+  pathwayMatrix: [],
+  exportsOverview: null,
+  requiredReports: [],
+  scheduledExports: [],
+  exportHistory: [],
+  systemOverview: null,
+  systemDiagnostics: null,
+  orgUnits: [],
+  credentials: [],
+  equipmentGaps: [],
+  utilizationEvents: [],
   setActiveTab: (tab) => {
     if (typeof window !== "undefined") {
       localStorage.setItem("ascend_admin_active_tab", tab);
@@ -177,7 +415,8 @@ export const useAdminStore = create<AdminStore>((set) => ({
   },
   setAuditSearchQuery: (query) => set({ auditSearchQuery: query }),
   setAuditFilter: (filter) => set({ auditFilter: filter }),
-  setSelectedScopeUnit: (unit) => set({ selectedScopeUnit: unit }),
+  setSelectedScopeUnit: (unitName) => set({ selectedScopeUnit: unitName }),
+  setSelectedScopeUnitId: (unitId) => set({ selectedScopeUnitId: unitId }),
   setCohortSizeK: (k) => set({ cohortSizeK: k }),
   setRolesFilter: (filter) => set({ rolesFilter: filter }),
   toggleDriverVisibility: (driver) =>
@@ -188,81 +427,208 @@ export const useAdminStore = create<AdminStore>((set) => ({
       },
     })),
   removeConfirmation: (id) =>
-    set((state) => {
-      const item = state.pendingConfirmations.find((c) => c.id === id);
-      if (!item) return {};
-
-      // Add a corresponding log to recentActivity
-      const newActivity: ActivityItem = {
-        id: `act-${Date.now()}`,
-        time: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
-        actor: "Lead Admin",
-        action: `Approved ${item.action.toLowerCase()}`,
-        reason: `${item.target} confirmed`,
-        scope: item.scope,
-        tag: "logged",
-        tagColor: "green",
-      };
-
-      return {
-        pendingConfirmations: state.pendingConfirmations.filter((c) => c.id !== id),
-        recentActivity: [newActivity, ...state.recentActivity],
-      };
-    }),
+    set((state) => ({
+      pendingConfirmations: state.pendingConfirmations.filter((item) => item.id !== id),
+    })),
   toggleServiceStatus: (id) =>
     set((state) => ({
-      services: state.services.map((s) => {
-        if (s.id !== id) return s;
-        const statusCycle: Record<string, "Online" | "Degraded" | "Offline"> = {
-          Online: "Degraded",
-          Degraded: "Offline",
-          Offline: "Online",
-        };
-        return {
-          ...s,
-          status: statusCycle[s.status],
-          latency: s.status === "Online" ? "320 ms" : s.status === "Degraded" ? "0 ms" : "15 ms",
-          lastCheck: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
-        };
-      }),
+      services: state.services.map((service) =>
+        service.id === id
+          ? {
+              ...service,
+              status:
+                service.status === "Online"
+                  ? "Degraded"
+                  : service.status === "Degraded"
+                    ? "Offline"
+                    : "Online",
+            }
+          : service,
+      ),
     })),
   toggleRbacCell: (rowIndex, colIndex) =>
     set((state) => {
-      const newMatrix = [...state.rbacMatrix];
-      const cycle: Record<string, "active" | "conditional" | "gated" | "locked" | "none"> = {
+      const next = [...state.rbacMatrix];
+      const row = { ...next[rowIndex] };
+      const states = [...row.states];
+      const cycle: Record<RbacMatrixRow["states"][number], RbacMatrixRow["states"][number]> = {
         active: "conditional",
         conditional: "gated",
         gated: "locked",
         locked: "none",
         none: "active",
       };
-      const currentRow = { ...newMatrix[rowIndex] };
-      const currentStates = [...currentRow.states];
-      currentStates[colIndex] = cycle[currentStates[colIndex]];
-      currentRow.states = currentStates;
-      newMatrix[rowIndex] = currentRow;
-      return { rbacMatrix: newMatrix };
+      states[colIndex] = cycle[states[colIndex]];
+      row.states = states;
+      next[rowIndex] = row;
+      return { rbacMatrix: next };
     }),
   updateRoleCount: (roleId, value) =>
     set((state) => ({
-      rolesCatalog: state.rolesCatalog.map((r) =>
-        r.id === roleId ? { ...r, assigned: value } : r
-      ),
+      rolesCatalog: state.rolesCatalog.map((role) => (role.id === roleId ? { ...role, assigned: value } : role)),
     })),
   addActivity: (entry) =>
-    set((state) => {
-      const newEntry: ActivityItem = {
-        id: `act-${Date.now()}`,
-        time: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
-        actor: entry.actor,
-        action: entry.action,
-        reason: entry.reason,
-        scope: entry.scope,
-        tag: entry.tag ?? "logged",
-        tagColor: entry.tagColor ?? "green",
-      };
-      return {
-        recentActivity: [newEntry, ...state.recentActivity],
-      };
-    }),
+    set((state) => ({
+      recentActivity: [
+        {
+          id: `act-${Date.now()}`,
+          time: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+          actor: entry.actor,
+          action: entry.action,
+          reason: entry.reason,
+          scope: entry.scope,
+          tag: entry.tag ?? "logged",
+          tagColor: entry.tagColor ?? "green",
+        },
+        ...state.recentActivity,
+      ],
+    })),
+  initialize: async (accessToken) => {
+    set({ isLoading: true, loadError: "" });
+
+    try {
+      const [
+        auditLog,
+        auditStats,
+        auditRollup,
+        roleCatalog,
+        accountsSummary,
+        rbacMatrix,
+        questionRegistry,
+        questionBankVersions,
+        scopeConfigResponse,
+        scopeMatrix,
+        pathwayMatrix,
+        exportsOverview,
+        requiredReports,
+        scheduledExports,
+        exportHistory,
+        systemOverview,
+        systemDiagnostics,
+        orgUnits,
+        credentials,
+        equipmentGaps,
+        utilizationEvents,
+      ] = await Promise.all([
+        getAdminAuditLog(accessToken, 1, 20),
+        getAdminAuditStats(accessToken),
+        getAdminAuditCategoryRollup(accessToken),
+        getAdminRoleCatalog(accessToken),
+        getAdminAccountsOnboardingSummary(accessToken),
+        getAdminRbacMatrix(accessToken),
+        getAdminQuestionRegistry(accessToken),
+        getAdminQuestionBankVersions(accessToken),
+        getAdminScopeConfigs(accessToken),
+        getAdminScopeMatrix(accessToken),
+        getAdminPathwayMatrix(accessToken),
+        getAdminExportsOverview(accessToken),
+        getAdminRequiredContractReports(accessToken),
+        getAdminScheduledExports(accessToken),
+        getAdminExportLogHistory(accessToken),
+        getAdminSystemOverview(accessToken),
+        getAdminSystemDiagnostics(accessToken),
+        getAdminOrgUnits(accessToken),
+        getAdminCredentials(accessToken),
+        getAdminEquipmentGaps(accessToken),
+        getAdminUtilizationEvents(accessToken),
+      ]);
+
+      const scopeConfigs = Array.isArray((scopeConfigResponse as { configs?: AdminScopeConfig[] }).configs)
+        ? ((scopeConfigResponse as { configs: AdminScopeConfig[] }).configs ?? [])
+        : [scopeConfigResponse as AdminScopeConfig];
+      const adminScopeConfig = scopeConfigs.find((item) => item.role === ADMIN_SCOPE_ROLE) ?? null;
+      const defaultUnit = orgUnits.units[0] ?? null;
+
+      set({
+        pendingConfirmations: exportsOverview.pending_confirmations.map(toConfirmationItem),
+        recentActivity: auditLog.entries.map(toActivityItem),
+        services: toServiceStatus(systemDiagnostics),
+        rolesCatalog: roleCatalog.roles.map(toRoleCatalogEntry),
+        rbacMatrix: toRbacMatrixRows(rbacMatrix.matrix),
+        auditEntries: auditLog.entries,
+        auditStats,
+        auditRollup: auditRollup.categories,
+        roleCatalogRaw: roleCatalog.roles,
+        accountsSummary,
+        questionRegistry,
+        questionBankVersions: questionBankVersions.versions,
+        scopeConfigs,
+        scopeMatrix: scopeMatrix.roles,
+        pathwayMatrix: pathwayMatrix.pathways,
+        exportsOverview,
+        requiredReports: requiredReports.reports,
+        scheduledExports: scheduledExports.schedules,
+        exportHistory: exportHistory.exports,
+        systemOverview,
+        systemDiagnostics,
+        orgUnits: orgUnits.units,
+        credentials: credentials.credentials,
+        equipmentGaps: equipmentGaps.gaps,
+        utilizationEvents: utilizationEvents.events,
+        selectedScopeUnit: defaultUnit?.name ?? "No unit selected",
+        selectedScopeUnitId: defaultUnit?.id ?? null,
+        cohortSizeK: adminScopeConfig?.cohort_k ?? 5,
+        driverVisibility: adminScopeConfig ? toDriverVisibility(adminScopeConfig) : defaultDriverVisibility,
+        isLoading: false,
+      });
+
+      if (defaultUnit?.id) {
+        await get().refreshScopeResolve(accessToken);
+      }
+    } catch (error) {
+      set({
+        isLoading: false,
+        loadError: formatAdminApiError(error),
+      });
+    }
+  },
+  refreshScopeResolve: async (accessToken) => {
+    const unitId = get().selectedScopeUnitId;
+    if (!unitId) {
+      set({ scopeResolution: null });
+      return;
+    }
+
+    try {
+      const scopeResolution = await resolveAdminScope(accessToken, ADMIN_SCOPE_ROLE, unitId);
+      set({ scopeResolution });
+    } catch (error) {
+      set({ loadError: formatAdminApiError(error) });
+    }
+  },
+  saveAdminScopeConfig: async (accessToken) => {
+    try {
+      const visibleComponents = (Object.keys(get().driverVisibility) as (keyof DriverVisibility)[])
+        .filter((key) => get().driverVisibility[key])
+        .map((key) => DRIVER_COMPONENT_MAP[key]);
+
+      const nextConfig = await updateAdminScopeConfig(accessToken, ADMIN_SCOPE_ROLE, {
+        cohort_k: get().cohortSizeK,
+        visible_components: visibleComponents,
+      });
+
+      set((state) => ({
+        scopeConfigs: state.scopeConfigs.some((item) => item.role === ADMIN_SCOPE_ROLE)
+          ? state.scopeConfigs.map((item) => (item.role === ADMIN_SCOPE_ROLE ? nextConfig : item))
+          : [nextConfig, ...state.scopeConfigs],
+      }));
+
+      await get().refreshScopeResolve(accessToken);
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
+    }
+  },
+  approveConfirmation: async (accessToken, id) => {
+    try {
+      await approveAdminConfirmation(accessToken, id);
+      set((state) => ({
+        pendingConfirmations: state.pendingConfirmations.filter((item) => item.id !== id),
+      }));
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
+    }
+  },
 }));
