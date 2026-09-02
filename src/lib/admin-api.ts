@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 import { StaffApiError, getApiErrorMessage } from "@/lib/staff-api";
+import { useAuthStore } from "@/store/auth-store";
 
 const NGROK_HEADERS = {
   "ngrok-skip-browser-warning": "1",
@@ -428,11 +429,19 @@ function buildUrl(path: string) {
 
 async function parseEnvelope<T>(response: Response): Promise<T> {
   const text = await response.text();
-  const payload = text ? (JSON.parse(text) as ApiEnvelope<T>) : {};
+  let payload: ApiEnvelope<T> & { detail?: string } = {};
+
+  if (text) {
+    try {
+      payload = JSON.parse(text) as ApiEnvelope<T> & { detail?: string };
+    } catch {
+      payload = { message: text };
+    }
+  }
 
   if (!response.ok) {
     throw new StaffApiError(
-      payload.message || `Request failed with status ${response.status}.`,
+      payload.message || payload.detail || `Request failed with status ${response.status}.`,
       response.status,
       payload,
     );
@@ -441,7 +450,7 @@ async function parseEnvelope<T>(response: Response): Promise<T> {
   return (payload.data ?? payload) as T;
 }
 
-async function request<T>(accessToken: string, path: string, init?: RequestInit) {
+async function requestOnce<T>(accessToken: string, path: string, init?: RequestInit) {
   const response = await fetch(buildUrl(path), {
     ...init,
     headers: {
@@ -452,6 +461,50 @@ async function request<T>(accessToken: string, path: string, init?: RequestInit)
   });
 
   return parseEnvelope<T>(response);
+}
+
+async function request<T>(accessToken: string, path: string, init?: RequestInit) {
+  try {
+    return await requestOnce<T>(accessToken, path, init);
+  } catch (error) {
+    if (!(error instanceof StaffApiError) || error.status !== 401) {
+      console.error("Admin API request failed", {
+        path,
+        method: init?.method ?? "GET",
+        error,
+      });
+      throw error;
+    }
+
+    console.warn("Admin API request received 401, attempting token refresh", {
+      path,
+      method: init?.method ?? "GET",
+    });
+
+    const authStore = useAuthStore.getState();
+    const refreshed = await authStore.refreshSession();
+    const nextToken = useAuthStore.getState().accessToken;
+
+    if (!refreshed || !nextToken) {
+      console.error("Admin API token refresh failed", {
+        path,
+        method: init?.method ?? "GET",
+        error,
+      });
+      throw error;
+    }
+
+    try {
+      return await requestOnce<T>(nextToken, path, init);
+    } catch (retryError) {
+      console.error("Admin API retry failed after refresh", {
+        path,
+        method: init?.method ?? "GET",
+        error: retryError,
+      });
+      throw retryError;
+    }
+  }
 }
 
 export function formatAdminApiError(error: unknown) {

@@ -7,11 +7,13 @@ import {
   changeAdminUserRole,
   createAdminUser,
   formatAdminApiError,
+  getAdminOrgUnits,
   getAdminUsers,
   renewAdminUserAccess,
   requestAdminUserDeactivation,
   resetAdminUserPassword,
   toAdminRoleLabel,
+  type AdminOrgUnit,
   type AdminUserRecord,
 } from "@/lib/admin-api";
 import { normalizeRole } from "@/lib/staff-api";
@@ -25,6 +27,7 @@ export type Person = {
   role: RoleId;
   roleLabel: string;
   unit: string;
+  unitId: string | null;
   status: AccountStatus;
   lastEdit: string;
   createdAt: string | null;
@@ -79,14 +82,23 @@ function formatStamp(value: string | null | undefined) {
   });
 }
 
-function mapUserToPerson(user: AdminUserRecord): Person {
+function mapUnitName(unitId: string | null, units: AdminOrgUnit[]) {
+  if (!unitId) {
+    return "";
+  }
+
+  return units.find((unit) => unit.id === unitId)?.name ?? unitId;
+}
+
+function mapUserToPerson(user: AdminUserRecord, units: AdminOrgUnit[]): Person {
   return {
     id: user.id,
     name: user.full_name,
     email: user.email.trim().toLowerCase(),
     role: normalizeRole(user.role),
     roleLabel: user.role,
-    unit: user.unit_id ?? "",
+    unit: mapUnitName(user.unit_id ?? null, units),
+    unitId: user.unit_id ?? null,
     status: user.is_active ? "active" : "deactivated",
     lastEdit: formatStamp(user.last_edit_at || user.created_at),
     createdAt: user.created_at ?? null,
@@ -102,13 +114,14 @@ export const useUsersStore = create<UsersStore>((set, get) => ({
     set({ isLoading: true, error: "" });
 
     try {
-      const response = await getAdminUsers(
-        accessToken,
-        role && role !== "All" ? toAdminRoleLabel(role) : undefined,
-      );
+      const [response, orgUnitsResponse] = await Promise.all([
+        getAdminUsers(accessToken, role && role !== "All" ? toAdminRoleLabel(role) : undefined),
+        getAdminOrgUnits(accessToken),
+      ]);
+      const units = orgUnitsResponse.units ?? [];
 
       set({
-        people: response.users.map(mapUserToPerson),
+        people: response.users.map((user) => mapUserToPerson(user, units)),
         isLoading: false,
       });
 
@@ -130,7 +143,8 @@ export const useUsersStore = create<UsersStore>((set, get) => ({
         initial_password: input.password?.trim() || undefined,
       });
 
-      const person = mapUserToPerson(created);
+      const orgUnitsResponse = await getAdminOrgUnits(accessToken);
+      const person = mapUserToPerson(created, orgUnitsResponse.units ?? []);
       set((state) => ({
         people: [person, ...state.people],
       }));
@@ -141,6 +155,17 @@ export const useUsersStore = create<UsersStore>((set, get) => ({
         initialPassword: created.initial_password ?? null,
       };
     } catch (error) {
+      console.error("Add person failed", {
+        input: {
+          full_name: input.name.trim(),
+          email: input.email.trim().toLowerCase(),
+          role: toAdminRoleLabel(input.role),
+          unit_id: input.unit.trim() || null,
+          is_active: input.status === "active",
+          initial_password_supplied: Boolean(input.password?.trim()),
+        },
+        error,
+      });
       return { ok: false, error: formatAdminApiError(error) };
     }
   },
@@ -163,7 +188,7 @@ export const useUsersStore = create<UsersStore>((set, get) => ({
         await changeAdminUserRole(accessToken, id, toAdminRoleLabel(updates.role));
       }
 
-      if (typeof updates.unit === "string" && updates.unit !== current.unit) {
+      if (typeof updates.unit === "string" && updates.unit !== (current.unitId ?? "")) {
         await assignAdminUserUnit(accessToken, id, updates.unit.trim() || null);
       }
 

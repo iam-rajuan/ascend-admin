@@ -96,6 +96,51 @@ export type AuthSessionUser = StaffApiUser & {
   roleName: string;
 };
 
+function extractReadableError(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  if (Array.isArray(value)) {
+    const messages = value
+      .map((item) => extractReadableError(item))
+      .filter((item): item is string => Boolean(item));
+    return messages.length > 0 ? messages.join(", ") : null;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferred = [
+      record.message,
+      record.detail,
+      record.error,
+      record.reason,
+      record.title,
+    ]
+      .map((item) => extractReadableError(item))
+      .find(Boolean);
+
+    if (preferred) {
+      return preferred;
+    }
+
+    const fieldMessages = Object.entries(record)
+      .flatMap(([key, item]) => {
+        const readable = extractReadableError(item);
+        return readable ? [`${key}: ${readable}`] : [];
+      });
+
+    return fieldMessages.length > 0 ? fieldMessages.join("; ") : null;
+  }
+
+  return null;
+}
+
 function buildUrl(path: string) {
   return `${env.NEXT_PUBLIC_API_BASE_URL}${path}`;
 }
@@ -202,14 +247,14 @@ export function normalizeAuthUser(user: StaffApiUser): AuthSessionUser {
 
 export function getApiErrorMessage(error: unknown) {
   if (error instanceof StaffApiError) {
-    return error.message;
+    return extractReadableError(error.payload) || extractReadableError(error.message) || "Something went wrong while talking to the Ascend API.";
   }
 
   if (error instanceof Error) {
-    return error.message;
+    return extractReadableError(error.message) || "Something went wrong while talking to the Ascend API.";
   }
 
-  return "Something went wrong while talking to the Ascend API.";
+  return extractReadableError(error) || "Something went wrong while talking to the Ascend API.";
 }
 
 export async function loginStaff(email: string, password: string, rememberMe: boolean) {

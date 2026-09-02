@@ -7,6 +7,8 @@ import type { RoleId } from "@/lib/roles";
 import { useAuthStore } from "@/store/auth-store";
 import { useUsersStore, type Person, type AccountStatus } from "@/store/users-store";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import { useCurrentUser } from "@/hooks/use-current-user";
+import { useAdminStore } from "@/store/admin-store";
 
 type PersonFormModalProps = {
   mode: "add" | "edit";
@@ -15,20 +17,61 @@ type PersonFormModalProps = {
   onSaved: (message: string) => void;
 };
 
+function validateInitialPassword(password: string) {
+  const trimmed = password.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.length < 8) {
+    return "Initial password must be at least 8 characters.";
+  }
+
+  if (!/[A-Z]/.test(trimmed)) {
+    return "Initial password must contain at least one uppercase letter.";
+  }
+
+  if (!/\d/.test(trimmed)) {
+    return "Initial password must contain at least one number.";
+  }
+
+  return null;
+}
+
 export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormModalProps) {
   const accessToken = useAuthStore((state) => state.accessToken);
   const addPerson = useUsersStore((state) => state.addPerson);
   const updatePerson = useUsersStore((state) => state.updatePerson);
   const people = useUsersStore((state) => state.people);
+  const currentUser = useCurrentUser();
+  const orgUnits = useAdminStore((state) => state.orgUnits);
 
   const [name, setName] = useState(initial?.name ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [role, setRole] = useState<RoleId>(initial?.role ?? "scs");
-  const [unit, setUnit] = useState(initial?.unit ?? "");
+  const [unit, setUnit] = useState(initial?.unitId ?? "");
   const [status, setStatus] = useState<AccountStatus>(initial?.status ?? "active");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  const canCreateAdminRole = currentUser?.roleName === "DWS Superadmin";
+  const creatableRoles = roleDefinitions.filter((definition) => {
+    if (definition.id === "plan") {
+      return false;
+    }
+
+    if (definition.id === "admin" && !canCreateAdminRole) {
+      return false;
+    }
+
+    return true;
+  });
+  const availableRoles =
+    initial && !creatableRoles.some((definition) => definition.id === initial.role)
+      ? roleDefinitions.filter((definition) => definition.id === initial.role || creatableRoles.some((allowed) => allowed.id === definition.id))
+      : creatableRoles;
 
   const handleSubmit = async (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -41,6 +84,15 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
       setError("Name and email are required.");
       return;
     }
+
+    if (mode === "add") {
+      const passwordError = validateInitialPassword(password);
+      if (passwordError) {
+        setError(passwordError);
+        return;
+      }
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
     const duplicate = people.find(
       (p) => p.email === normalizedEmail && p.id !== initial?.id
@@ -111,6 +163,7 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
             <label htmlFor="person-name" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Name</label>
             <input
               id="person-name"
+              name="full_name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#070a13] px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:border-[var(--brand-color)]"
@@ -125,6 +178,7 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
             <label htmlFor="person-email" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Email</label>
             <input
               id="person-email"
+              name="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -141,22 +195,29 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
               <label htmlFor="person-role" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Role</label>
               <select
                 id="person-role"
+                name="role"
                 value={role}
                 onChange={(e) => setRole(e.target.value as RoleId)}
                 className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#070a13] px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:border-[var(--brand-color)]"
                 disabled={isSaving}
               >
-                {roleDefinitions.map((r) => (
+                {availableRoles.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
                   </option>
                 ))}
               </select>
+              {mode === "add" && (
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Provisioning uses the live `POST /admin/users` contract. `Plan` is not a real backend role, and `DWS Admin` creation requires a `DWS Superadmin`.
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="person-status" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</label>
               <select
                 id="person-status"
+                name="status"
                 value={status}
                 onChange={(e) => setStatus(e.target.value as AccountStatus)}
                 className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#070a13] px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:border-[var(--brand-color)]"
@@ -169,14 +230,25 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
           </div>
           <div>
             <label htmlFor="person-unit" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Unit / team</label>
-            <input
+            <select
               id="person-unit"
+              name="unit_id"
               value={unit}
               onChange={(e) => setUnit(e.target.value)}
               className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#070a13] px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:border-[var(--brand-color)]"
-              placeholder="e.g. 23rd SFS"
               disabled={isSaving}
-            />
+            >
+              <option value="">No unit assigned</option>
+              {orgUnits.map((orgUnit) => (
+                <option key={orgUnit.id} value={orgUnit.id}>
+                  {orgUnit.name}
+                </option>
+              ))}
+              {initial?.unitId && !orgUnits.some((orgUnit) => orgUnit.id === initial.unitId) && (
+                <option value={initial.unitId}>{initial.unit || initial.unitId}</option>
+              )}
+            </select>
+            <p className="mt-1 text-[10px] text-slate-400">Uses the live admin org-unit catalog so assignments send the correct backend `unit_id` while showing the real unit name.</p>
           </div>
 
           {mode === "add" && (
@@ -187,6 +259,7 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
               <div className="flex items-center gap-2">
                 <input
                   id="person-password"
+                  name="initial_password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#070a13] px-3 py-2 text-sm font-mono text-slate-800 dark:text-white outline-none focus:border-[var(--brand-color)]"
@@ -195,6 +268,7 @@ export function PersonFormModal({ mode, initial, onClose, onSaved }: PersonFormM
                 />
               </div>
               <p className="mt-1 text-[10px] text-slate-400">Optional. If left blank, the backend can return or manage the initial password according to its own rules.</p>
+              <p className="mt-1 text-[10px] text-slate-400">If you enter one yourself, it must be 8+ characters and include at least 1 uppercase letter and 1 number.</p>
             </div>
           )}
 

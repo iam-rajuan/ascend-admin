@@ -1,400 +1,617 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
-import { AscendLogo } from "@/components/ascend-logo";
-import { useToast } from "@/hooks/use-toast";
 import { useTheme } from "@/hooks/use-theme";
+import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-current-user";
+import { AscendLogo } from "@/components/ascend-logo";
 import { IconButton } from "@/components/ui/icon-button";
-import { RecordDetailDialog } from "@/components/ui/record-detail-dialog";
-import { CreateRecordModal } from "@/components/ui/create-record-modal";
+import { AccessibleDialog } from "@/components/ui/accessible-dialog";
+import { getApiErrorMessage } from "@/lib/staff-api";
 import {
-  POPULATION_LEVELS,
-  PRIVACY_STATES,
-  ALERT_TYPES,
-  PLAN_STATUSES,
-  REVIEW_STATUS,
-} from "@/lib/terminology";
+  addReconditioningRestriction,
+  assignRecommendation,
+  createCoverageLog,
+  createLeaveRecord,
+  createGroupThread,
+  createPtSession,
+  deleteLeaveRecord,
+  downloadMessageAttachment,
+  enrollPtSessionAttendee,
+  getActiveRecommendations,
+  getCoverageLoadByFlight,
+  getCoverageLog,
+  getGroupThread,
+  getGroupThreads,
+  getLeaveHistory,
+  getLeaveOverlap,
+  getMessageThread,
+  getMessageTrace,
+  getMessageThreads,
+  getOftRecord,
+  getPerformanceSummaries,
+  getReconditioningRestrictions,
+  getReconditioningTimeline,
+  getRoutingLevels,
+  getScsDashboard,
+  getScopedWorkoutSummary,
+  getScopedWorkouts,
+  getUpcomingPtSessions,
+  removePtSessionAttendee,
+  releaseReconditioningRestriction,
+  scanMessage,
+  sendGroupMessage,
+  sendMessage,
+  updatePtSession,
+  upsertReconditioningPlan,
+  type ActiveRecommendationsResponse,
+  type CoverageLoadByFlightResponse,
+  type MessageThreadsResponse,
+  type LeaveHistoryResponse,
+  type LeaveOverlapResponse,
+  type OftRecordResponse,
+  type PerformanceSummariesResponse,
+  type ReconditioningRestrictionsResponse,
+  type ReconditioningTimelineResponse,
+  type RoutingLevelsResponse,
+  type ScsDashboardData,
+  type UpcomingPtSessionsResponse,
+  type WorkoutListResponse,
+  type WorkoutSummaryResponse,
+} from "@/lib/role-dashboards-api";
 import {
-  Landmark,
-  Bell,
-  Sun,
-  Moon,
-  Shield,
   Activity,
   ArrowLeft,
-  LogOut,
-  Info,
-  CheckCircle,
-  AlertTriangle,
-  Download,
+  Bell,
   Calendar,
-  Plus,
-  Send,
-  Search,
+  CheckCircle,
   ClipboardList,
+  FileText,
+  Info,
+  Landmark,
+  LogOut,
+  MessageSquare,
+  Moon,
+  Plus,
+  Search,
+  Send,
+  Sun,
+  TrendingUp,
   User,
   Users,
-  Lock,
-  MessageSquare,
-  Sparkles,
-  TrendingUp,
-  FileText,
-  ArrowLeftRight,
-  TrendingDown,
   XCircle,
-  ChevronRight,
-  UserCheck,
 } from "lucide-react";
 
 type TabType = "overview" | "dashboard" | "people" | "plans" | "coverage" | "messages";
 
-interface MessageRow {
-  sender: "scs" | "airman";
-  text: string;
-  time: string;
-}
-
-type WorkoutRecord = {
-  status: string;
-  date: string;
-  type: string;
-  dur: string;
-  rpe: string;
-  plan: string;
-  lim: string;
-  rev: string;
-  col: string;
-};
-
-type TemplateRecord = {
-  title: string;
-  badge: string;
-  star: boolean;
-  desc: string;
-  details: string;
-  cad: string;
-  win: string;
-  owner: string;
-};
-
-type AssignmentRecord = {
-  status: string;
-  plan: string;
-  air: string;
-  airUnit: string;
-  win: string;
-  owner: string;
-  comp: string;
-  col: string;
-  sign: string;
-  signBold?: boolean;
-};
-
-type QueueRecord = {
-  name: string;
-  status: string;
-  details: string;
-};
-
-const WORKOUT_LOG: WorkoutRecord[] = [
-  { status: "Done", date: "28 Jul", type: "Rehab · McGill Big 3", dur: "32 min", rpe: "6", plan: "Rehab Block 2", lim: "Sub-80% 1RM deadlift", rev: "Reviewed", col: "green" },
-  { status: "Done", date: "27 Jul", type: "Mobility reset", dur: "12 min", rpe: "3", plan: "Rehab Block 2", lim: "—", rev: "Reviewed", col: "green" },
-  { status: "Done", date: "25 Jul", type: "Strength · back squat", dur: "45 min", rpe: "7", plan: "Cycle 4 Perf.", lim: "—", rev: "Reviewed", col: "green" },
-  { status: "Modified", date: "24 Jul", type: "Tempo run", dur: "24 min", rpe: "5", plan: "OFT Tempo Prep", lim: "HR cap: 165", rev: "Pending", col: "orange" },
-  { status: "Skipped", date: "22 Jul", type: "Loaded carry", dur: "—", rpe: "—", plan: "Rehab Block 2", lim: "L4 lower back", rev: REVIEW_STATUS.PENDING, col: "blue" },
-  { status: "Done", date: "20 Jul", type: "Endurance · intervals", dur: "36 min", rpe: "7", plan: "Cycle 4 Perf.", lim: "—", rev: "Reviewed", col: "green" },
-  { status: "Done", date: "18 Jul", type: "Strength · deadlift", dur: "45 min", rpe: "6", plan: "Rehab Block 2", lim: "Sub-80% 1RM", rev: "Reviewed", col: "green" },
-];
-
-// Shared matcher for the "Needs review / OFT / Reconditioning / L4+" queue filter
-// pills used on both the Dashboard tab queue and the People roster table.
-// "Needs review" = rows with an active concern driver (red/orange coloring),
-// distinct from neutral/positive drivers (badge-teal, badge-slate).
-function matchesQueuePill(pill: string, row: { dr: string; drCol: string; plan?: string }): boolean {
-  switch (pill) {
-    case "All 112":
-      return true;
-    case "OFT":
-      return row.dr.includes("OFT") || !!row.plan?.includes("OFT");
-    case "Reconditioning":
-      return !!row.plan?.includes("Recond");
-    case "L4+": {
-      const match = row.dr.match(/^L(\d+)/);
-      return !!match && Number(match[1]) >= 4;
-    }
-    case "Needs review":
-    default:
-      return row.drCol === "red" || row.drCol === "orange" || row.drCol === "badge-orange";
+function formatDate(value: string | null | undefined, withTime = false) {
+  if (!value) {
+    return "—";
   }
-}
 
-// Matcher for the "Active / Rehab / Performance / Reconditioning / Draft"
-// filter pills above the Active Assignments table on the Plans tab.
-function matchesAssignmentPill(pill: string, row: { status: string; plan: string }): boolean {
-  switch (pill) {
-    case PLAN_STATUSES.DRAFT:
-      return row.status === PLAN_STATUSES.DRAFT;
-    case "Rehab":
-      return row.plan.startsWith("Rehab");
-    case "Performance":
-      return row.plan.includes("Performance");
-    case "Reconditioning":
-      return row.plan.includes("Reconditioning");
-    case PLAN_STATUSES.ACTIVE:
-    default:
-      return row.status === PLAN_STATUSES.ACTIVE;
-  }
-}
-
-export default function ScsDashboard() {
-  const router = useRouter();
-  const { isAuthenticated, logout } = useAuthStore();
-  const currentUser = useCurrentUser();
-  const [activeTabInternal, setActiveTabInternal] = useState<TabType>("overview");
-  const { theme, mounted: hasMounted, toggleTheme } = useTheme();
-  const { show: showConfirmToast, message: toastMessage, triggerToast } = useToast();
-
-  // Roster tracking
-  const [reviewingAirmanId, setReviewingAirmanId] = useState<string | null>(null);
-
-  // Detail dialogs for stub actions
-  const [viewingSummary, setViewingSummary] = useState(false);
-  const [viewingAuditLog, setViewingAuditLog] = useState(false);
-  const [viewingAllWorkouts, setViewingAllWorkouts] = useState(false);
-  const [viewingPlanRefs, setViewingPlanRefs] = useState(false);
-  const [viewingTemplate, setViewingTemplate] = useState<TemplateRecord | null>(null);
-  const [viewingAssignment, setViewingAssignment] = useState<AssignmentRecord | null>(null);
-  const [viewingQueueItem, setViewingQueueItem] = useState<QueueRecord | null>(null);
-
-  // Create-record modal open flags + owned state arrays (Phase 4)
-  const [showPlanModal, setShowPlanModal] = useState(false);
-  const [showPerfNoteModal, setShowPerfNoteModal] = useState(false);
-  const [showAssignPlanModal, setShowAssignPlanModal] = useState(false);
-  const [showRecondPlanModal, setShowRecondPlanModal] = useState(false);
-  const [showNewDmModal, setShowNewDmModal] = useState(false);
-
-  type PerformancePlan = { title: string; badge: string; desc: string; details: string; cad: string; win: string; owner: string };
-  const [performancePlans, setPerformancePlans] = useState<PerformancePlan[]>([]);
-
-  type PerformanceNote = { id: string; date: string; text: string; author: string };
-  const [performanceNotes, setPerformanceNotes] = useState<PerformanceNote[]>([
-    {
-      id: "pn-seed-1",
-      date: "28 Jul",
-      text: "Deadlift session went well today, mobility reset held through warm-up.",
-      author: "TSgt Lee",
-    },
-  ]);
-
-  type AssignedPlanRow = { id: string; status: string; plan: string; air: string; airUnit: string; win: string; owner: string; comp: string; col: string; sign: string; signBold?: boolean };
-  const [assignedPlans, setAssignedPlans] = useState<AssignedPlanRow[]>([]);
-
-  type ReconditioningPlan = { id: string; title: string; badge: string; desc: string; cad: string; win: string; owner: string };
-  const [reconditioningPlans, setReconditioningPlans] = useState<ReconditioningPlan[]>([]);
-
-  // Phase 6 — Workflow action wiring
-  // ① Edit plan wizard (Rehab Block 2) — inline editing panel
-  const [editingPlanBlock, setEditingPlanBlock] = useState(false);
-  const [editingPlanDraft, setEditingPlanDraft] = useState<PerformancePlan | null>(null);
-
-  // ② Assignment form "Save draft" — draft assignments
-  type AssignmentDraft = { id: string; airman: string; plan: string; window: string; coOwner: string; status: string; savedAt: string };
-  const [assignmentDrafts, setAssignmentDrafts] = useState<AssignmentDraft[]>([]);
-
-  // ④ Queue item modal "Save changes" — pending edits to queue items
-  type QueueItemEdit = { id: string; queueItemId: string; airman: string; fields: { status: string; notes: string }; editedAt: string };
-  const [queueItemEdits, setQueueItemEdits] = useState<QueueItemEdit[]>([]);
-
-  // ⑤ Queue item modal "Send to PT/IM" — sent-for-sign-off audit log
-  type SentForSignOff = { id: string; airman: string; sentAt: string; by: string };
-  const [sentForSignOff, setSentForSignOff] = useState<SentForSignOff[]>([]);
-
-  // Phase 5: J. Reyes profile drill-in sub-tabs (Overview / Trends / Plans / Records / Notes)
-  const [personTab, setPersonTab] = useState<"Overview" | "Trends" | "Plans" | "Records" | "Notes">("Overview");
-
-  type DmThread = { initials: string; name: string; time: string; txt: string; unread: boolean; active: boolean };
-  const [dmThreads, setDmThreads] = useState<DmThread[]>([]);
-
-  // Chat/Messages states
-  const [selectedChatId, setSelectedChatId] = useState<string>("J. Reyes");
-  const [typedMessage, setTypedMessage] = useState("");
-  
-  // Custom mock chat threads matching Figma data
-  const [chatThreads, setChatThreads] = useState<Record<string, MessageRow[]>>({
-    "J. Reyes": [
-      { sender: "scs", text: "Take today lighter. Start the 12-min reset before duty, and keep deadlifts sub-80% this week.", time: "06:35" },
-      { sender: "airman", text: "Got it. Started the mobility reset \u2014 felt pretty good today.", time: "06:42" },
-      { sender: "airman", text: "Ready for mobility. Are we good to move into block 2 on Monday?", time: "06:14" },
-      { sender: "airman", text: "Also \u2014 slept 7.5h last night, anchored at 22:30. The dim-evening routine is helping.", time: "06:18" }
-    ],
-    "A. Mendez": [
-      { sender: "airman", text: "Sleep timing past 3 nights has been inconsistent due to night shifts. Can we adjust my loading block?", time: "Yesterday" },
-      { sender: "scs", text: "Understood. Keep intensity around RPE 6-7. Focus on hydration and the dim-light sleep routine.", time: "Yesterday" }
-    ],
-    "T. Cho": [
-      { sender: "airman", text: "OFT cleared \u2014 thanks TSgt Lee! Deadlift felt stable throughout.", time: "Yesterday" },
-      { sender: "scs", text: "Excellent news, Cho. Transitioning you back to Cycle 4 performance. Keep up the pre-hab.", time: "Yesterday" }
-    ],
-    "D. Okafor": [
-      { sender: "airman", text: "Hip \u2014 still tight after rehab sessions. Felt a pinch during squats.", time: "23 Jul" },
-      { sender: "scs", text: "Okay, hold squats for now. We will swap them with hip-hinge glute bridges on block 1.", time: "23 Jul" }
-    ]
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: withTime ? "2-digit" : undefined,
+    minute: withTime ? "2-digit" : undefined,
   });
+}
 
-  // Assign plan forms
-  const [assignAirman, setAssignAirman] = useState("J. Reyes");
-  const [assignPlan, setAssignPlan] = useState("Rehab Block 2");
-  const [assignWindow, setAssignWindow] = useState("28 Jul - 25 Aug");
-  const [assignCoOwner, setAssignCoOwner] = useState("SCS + PT/IM");
+function formatNumber(value: unknown, fallback = "—") {
+  return typeof value === "number" ? value.toLocaleString("en-US") : fallback;
+}
 
-  // Filter pill states (scope which records show in nearby tables/queues)
-  const [dashboardDateRange, setDashboardDateRange] = useState("Today");
-  const [dashboardQueueFilter, setDashboardQueueFilter] = useState("Needs review");
-  const [peopleQueueFilter, setPeopleQueueFilter] = useState("Needs review");
-  const [plansView, setPlansView] = useState("Templates");
-  const [assignmentsFilter, setAssignmentsFilter] = useState<string>(PLAN_STATUSES.ACTIVE);
-  const [coverageWeek, setCoverageWeek] = useState("This week");
+function formatPercent(value: unknown) {
+  return typeof value === "number" ? `${value.toFixed(1)}%` : "—";
+}
 
-  const handleSendMessage = () => {
-    if (!typedMessage.trim()) return;
-    const currentThread = chatThreads[selectedChatId] || [];
-    setChatThreads({
-      ...chatThreads,
-      [selectedChatId]: [
-        ...currentThread,
-        { sender: "scs", text: typedMessage, time: "Just now" }
-      ]
-    });
-    setTypedMessage("");
-    triggerToast("Message sent and audit-logged");
-  };
+function formatLabel(value: string | null | undefined) {
+  if (!value) {
+    return "—";
+  }
 
-  const handleAssignPlanSubmit = (e: React.SubmitEvent) => {
-    e.preventDefault();
-    // Push to existing assignedPlans (Phase 4) with PENDING_REVIEW status
-    const newAssignment: AssignedPlanRow = {
-      id: `ap-form-${Date.now()}`,
-      status: PLAN_STATUSES.PENDING_REVIEW,
-      plan: assignPlan,
-      air: assignAirman,
-      airUnit: "",
-      win: assignWindow,
-      owner: assignCoOwner,
-      comp: "0%",
-      col: "orange",
-      sign: "PT/IM",
-      signBold: false,
-    };
-    setAssignedPlans((prev) => [newAssignment, ...prev]);
-    triggerToast(`Plan "${assignPlan}" assigned successfully to ${assignAirman}`);
-    // Clear form
-    setAssignAirman("J. Reyes");
-    setAssignPlan("Rehab Block 2");
-    setAssignWindow("28 Jul - 25 Aug");
-    setAssignCoOwner("SCS + PT/IM");
-  };
+  return value.replace(/_/g, " ");
+}
 
-  const handleSaveAssignmentDraft = () => {
-    const draft: AssignmentDraft = {
-      id: `d-${Date.now()}`,
-      airman: assignAirman,
-      plan: assignPlan,
-      window: assignWindow,
-      coOwner: assignCoOwner,
-      status: "Draft",
-      savedAt: new Date().toISOString(),
-    };
-    setAssignmentDrafts((prev) => [draft, ...prev]);
-    triggerToast("Plan assignment saved as draft");
-  };
+function stringifyValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => stringifyValue(item)).join(", ");
+  }
+  return JSON.stringify(value);
+}
 
-  const setActiveTab = (tab: TabType) => {
-    setActiveTabInternal(tab);
-    setReviewingAirmanId(null);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("ascend_scs_active_tab", tab);
+function getRecordValue(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
     }
-  };
+  }
+  return null;
+}
 
-  const activeTab = activeTabInternal;
+function getRecordId(record: Record<string, unknown>) {
+  const value = getRecordValue(record, [
+    "user_id",
+    "operator_user_id",
+    "participant_id",
+    "other_user_id",
+    "recipient_id",
+    "id",
+  ]);
+  return typeof value === "string" ? value : null;
+}
 
-  // Sync saved active tab
+function getRecordTitle(record: Record<string, unknown>) {
+  const value = getRecordValue(record, [
+    "full_name",
+    "name",
+    "title",
+    "operator_name",
+    "recipient_name",
+    "flight_name",
+  ]);
+  return stringifyValue(value);
+}
+
+function getRecordSubtitle(record: Record<string, unknown>) {
+  const value = getRecordValue(record, [
+    "flight_name",
+    "unit_name",
+    "role",
+    "status",
+    "preview",
+    "readiness_component",
+  ]);
+  return stringifyValue(value);
+}
+
+function statusTone(status: string | null | undefined) {
+  const normalized = String(status ?? "").toLowerCase();
+  if (normalized.includes("active") || normalized.includes("ready") || normalized.includes("completed") || normalized.includes("current")) {
+    return "bg-emerald-500/10 text-emerald-500";
+  }
+  if (normalized.includes("pending") || normalized.includes("review") || normalized.includes("scheduled") || normalized.includes("draft")) {
+    return "bg-amber-500/10 text-amber-500";
+  }
+  if (normalized.includes("restrict") || normalized.includes("missed") || normalized.includes("low") || normalized.includes("blocked")) {
+    return "bg-rose-500/10 text-rose-500";
+  }
+  return "bg-sky-500/10 text-sky-500";
+}
+
+function sanitizeDisplayData(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeDisplayData(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => !/(^id$|_id$|^id_|^user_id$|^provider_id$|^recipient_id$|^participant_ids?$)/i.test(key))
+        .map(([key, nestedValue]) => [key, sanitizeDisplayData(nestedValue)]),
+    );
+  }
+
+  return value;
+}
+
+export default function ScsDashboardPage() {
+  const router = useRouter();
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isHydrated = useAuthStore((state) => state.isHydrated);
+  const logout = useAuthStore((state) => state.logout);
+  const currentUser = useCurrentUser();
+  const { theme, mounted: hasMounted, toggleTheme } = useTheme();
+  const { show: showToast, message: toastMessage, triggerToast } = useToast();
+
+  const [activeTab, setActiveTab] = useState<TabType>("overview");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [isMutating, setIsMutating] = useState(false);
+
+  const [dashboard, setDashboard] = useState<ScsDashboardData | null>(null);
+  const [recommendations, setRecommendations] = useState<ActiveRecommendationsResponse>(null);
+  const [workouts, setWorkouts] = useState<WorkoutListResponse | null>(null);
+  const [workoutSummary, setWorkoutSummary] = useState<WorkoutSummaryResponse | null>(null);
+  const [coverageLoad, setCoverageLoad] = useState<CoverageLoadByFlightResponse | null>(null);
+  const [routingLevels, setRoutingLevels] = useState<RoutingLevelsResponse | null>(null);
+  const [threads, setThreads] = useState<MessageThreadsResponse | null>(null);
+  const [groupThreads, setGroupThreads] = useState<MessageThreadsResponse | null>(null);
+  const [coverageLogs, setCoverageLogs] = useState<Array<Record<string, unknown>>>([]);
+  const [ptSessions, setPtSessions] = useState<UpcomingPtSessionsResponse | null>(null);
+  const [leaveOverlap, setLeaveOverlap] = useState<LeaveOverlapResponse | null>(null);
+  const [leaveHistory, setLeaveHistory] = useState<LeaveHistoryResponse | null>(null);
+
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [oftRecord, setOftRecord] = useState<OftRecordResponse | null>(null);
+  const [timeline, setTimeline] = useState<ReconditioningTimelineResponse | null>(null);
+  const [restrictions, setRestrictions] = useState<ReconditioningRestrictionsResponse | null>(null);
+  const [performanceSummaries, setPerformanceSummaries] = useState<PerformanceSummariesResponse | null>(null);
+
+  const [selectedThreadUserId, setSelectedThreadUserId] = useState("");
+  const [threadDetail, setThreadDetail] = useState<Record<string, unknown> | null>(null);
+  const [selectedGroupThreadId, setSelectedGroupThreadId] = useState("");
+  const [groupThreadDetail, setGroupThreadDetail] = useState<Record<string, unknown> | null>(null);
+  const [messageTraceId, setMessageTraceId] = useState("");
+  const [messageTrace, setMessageTrace] = useState<Record<string, unknown> | null>(null);
+
+  const [showRecommendationModal, setShowRecommendationModal] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showRestrictionModal, setShowRestrictionModal] = useState(false);
+  const [showCoverageModal, setShowCoverageModal] = useState(false);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [showPtSessionModal, setShowPtSessionModal] = useState(false);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+
+  const [recommendationForm, setRecommendationForm] = useState({
+    userId: "",
+    readinessComponent: "Physical Readiness",
+    title: "",
+    instructions: "",
+    followUpTimeline: "7 days",
+    steps: '[{"title":"Step 1","description":"Describe the action"}]',
+    jointCoordination: false,
+  });
+  const [planForm, setPlanForm] = useState({
+    userId: "",
+    phase: "Active reconditioning",
+    sessionsCompleted: "0",
+    sessionsTotal: "1",
+    cadenceNote: "",
+    injuryFlags: "",
+    ptimClearanceStatus: "pending",
+    nextReviewDate: new Date().toISOString().slice(0, 10),
+    limitationFlag: true,
+    rehabStrategySummary: "",
+    scsCoordinationStatus: "active",
+    severityLevel: "moderate",
+    injuryReportedOn: new Date().toISOString().slice(0, 10),
+  });
+  const [restrictionForm, setRestrictionForm] = useState({
+    userId: "",
+    description: "",
+    requiredPhase: "Active reconditioning",
+  });
+  const [coverageForm, setCoverageForm] = useState({
+    providerId: "",
+    role: currentUser?.roleName || "SCS",
+    hours: "1",
+    coverageDate: new Date().toISOString().slice(0, 10),
+    weekendRsd: false,
+  });
+  const [scanBody, setScanBody] = useState("");
+  const [scanResult, setScanResult] = useState<{ blocked_terms?: string[]; severity?: number | null } | null>(null);
+  const [directMessageForm, setDirectMessageForm] = useState({
+    recipientId: "",
+    body: "",
+    relatedRecommendationId: "",
+  });
+  const [groupForm, setGroupForm] = useState({
+    title: "",
+    participantIds: "",
+  });
+  const [groupMessageForm, setGroupMessageForm] = useState({
+    threadId: "",
+    body: "",
+  });
+  const [messageFile, setMessageFile] = useState<File | null>(null);
+  const [attachmentMessageId, setAttachmentMessageId] = useState("");
+  const [ptSessionForm, setPtSessionForm] = useState({
+    sessionDate: new Date().toISOString().slice(0, 10),
+    startTime: "0700",
+    groupLabel: "",
+    focus: "conditioning",
+    capacity: "15",
+    leadProviderId: "",
+  });
+  const [sessionActionForm, setSessionActionForm] = useState({
+    sessionId: "",
+    status: "scheduled",
+    capacity: "",
+    attendeeUserId: "",
+  });
+  const [leaveForm, setLeaveForm] = useState({
+    leaveType: "leave",
+    startDate: new Date().toISOString().slice(0, 10),
+    endDate: new Date().toISOString().slice(0, 10),
+    note: "",
+    userId: "",
+  });
+  const [leaveDeleteId, setLeaveDeleteId] = useState("");
+
   useEffect(() => {
-    const savedTab = localStorage.getItem("ascend_scs_active_tab") as TabType | null;
-    if (savedTab && ["overview", "dashboard", "people", "plans", "coverage", "messages"].includes(savedTab)) {
-      setActiveTabInternal(savedTab);
+    if (typeof window === "undefined") {
+      return;
+    }
+    const saved = window.localStorage.getItem("ascend_scs_active_tab");
+    if (saved && ["overview", "dashboard", "people", "plans", "coverage", "messages"].includes(saved)) {
+      setActiveTab(saved as TabType);
     }
   }, []);
 
-  // Sync auth check (mount state now comes from useTheme())
   useEffect(() => {
-    if (hasMounted && !isAuthenticated) {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("ascend_scs_active_tab", activeTab);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (hasMounted && isHydrated && !isAuthenticated) {
       router.push("/");
     }
-  }, [isAuthenticated, hasMounted, router]);
+  }, [hasMounted, isAuthenticated, isHydrated, router]);
+
+  const operatorOptions = useMemo(() => {
+    const rows = dashboard?.operators ?? [];
+    return rows
+      .map((row) => {
+        const id = getRecordId(row);
+        if (!id) {
+          return null;
+        }
+        return {
+          id,
+          name: getRecordTitle(row),
+          subtitle: getRecordSubtitle(row),
+        };
+      })
+      .filter((row): row is { id: string; name: string; subtitle: string } => Boolean(row));
+  }, [dashboard?.operators]);
+
+  useEffect(() => {
+    if (!selectedUserId) {
+      const defaultId = operatorOptions[0]?.id ?? currentUser?.id ?? "";
+      if (defaultId) {
+        setSelectedUserId(defaultId);
+        setRecommendationForm((prev) => ({ ...prev, userId: defaultId }));
+        setPlanForm((prev) => ({ ...prev, userId: defaultId }));
+        setRestrictionForm((prev) => ({ ...prev, userId: defaultId }));
+        setDirectMessageForm((prev) => ({ ...prev, recipientId: prev.recipientId || defaultId }));
+      }
+    }
+  }, [currentUser?.id, operatorOptions, selectedUserId]);
+
+  useEffect(() => {
+    if (!coverageForm.providerId && currentUser?.id) {
+      setCoverageForm((prev) => ({ ...prev, providerId: currentUser.id, role: currentUser.roleName || prev.role }));
+    }
+  }, [coverageForm.providerId, currentUser?.id, currentUser?.roleName]);
+
+  const loadDashboard = async () => {
+    if (!accessToken) {
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const [
+        dashboardData,
+        recommendationsData,
+        workoutsData,
+        workoutSummaryData,
+        coverageLoadData,
+        routingLevelsData,
+        threadsData,
+        groupThreadsData,
+        ptSessionsData,
+        leaveOverlapData,
+      ] = await Promise.all([
+        getScsDashboard(accessToken),
+        getActiveRecommendations(accessToken),
+        getScopedWorkouts(accessToken),
+        getScopedWorkoutSummary(accessToken),
+        getCoverageLoadByFlight(accessToken),
+        getRoutingLevels(accessToken),
+        getMessageThreads(accessToken),
+        getGroupThreads(accessToken),
+        getUpcomingPtSessions(accessToken),
+        getLeaveOverlap(accessToken),
+      ]);
+
+      setDashboard(dashboardData);
+      setRecommendations(recommendationsData);
+      setWorkouts(workoutsData);
+      setWorkoutSummary(workoutSummaryData);
+      setCoverageLoad(coverageLoadData);
+      setRoutingLevels(routingLevelsData);
+      setThreads(threadsData);
+      setGroupThreads(groupThreadsData);
+      setPtSessions(ptSessionsData);
+      setLeaveOverlap(leaveOverlapData);
+
+      if (currentUser?.id) {
+        const [coverageData, leaveHistoryData] = await Promise.all([
+          getCoverageLog(accessToken, currentUser.id),
+          getLeaveHistory(accessToken, currentUser.id),
+        ]);
+        setCoverageLogs(coverageData.logs);
+        setLeaveHistory(leaveHistoryData);
+      } else {
+        setCoverageLogs([]);
+        setLeaveHistory(null);
+      }
+    } catch (nextError) {
+      setError(getApiErrorMessage(nextError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSelectedUser = async (userId: string) => {
+    if (!accessToken || !userId) {
+      setOftRecord(null);
+      setTimeline(null);
+      setRestrictions(null);
+      setPerformanceSummaries(null);
+      return;
+    }
+
+    try {
+      const [oftData, timelineData, restrictionsData, performanceData] = await Promise.all([
+        getOftRecord(accessToken, userId),
+        getReconditioningTimeline(accessToken, userId),
+        getReconditioningRestrictions(accessToken, userId),
+        getPerformanceSummaries(accessToken, userId),
+      ]);
+      setOftRecord(oftData);
+      setTimeline(timelineData);
+      setRestrictions(restrictionsData);
+      setPerformanceSummaries(performanceData);
+    } catch (nextError) {
+      triggerToast(getApiErrorMessage(nextError));
+    }
+  };
+
+  const loadThread = async (otherUserId: string) => {
+    if (!accessToken || !otherUserId) {
+      setThreadDetail(null);
+      return;
+    }
+
+    try {
+      const detail = await getMessageThread(accessToken, otherUserId);
+      setThreadDetail(detail);
+    } catch (nextError) {
+      triggerToast(getApiErrorMessage(nextError));
+      setThreadDetail(null);
+    }
+  };
+
+  const loadGroupThreadDetail = async (threadId: string) => {
+    if (!accessToken || !threadId) {
+      setGroupThreadDetail(null);
+      return;
+    }
+
+    try {
+      const detail = await getGroupThread(accessToken, threadId);
+      setGroupThreadDetail(detail);
+    } catch (nextError) {
+      triggerToast(getApiErrorMessage(nextError));
+      setGroupThreadDetail(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!hasMounted || !isHydrated || !accessToken) {
+      return;
+    }
+
+    void loadDashboard();
+  }, [accessToken, hasMounted, isHydrated, currentUser?.id]);
+
+  useEffect(() => {
+    if (!hasMounted || !isHydrated || !accessToken || !selectedUserId) {
+      return;
+    }
+
+    void loadSelectedUser(selectedUserId);
+  }, [accessToken, hasMounted, isHydrated, selectedUserId]);
+
+  useEffect(() => {
+    if (!selectedThreadUserId) {
+      const firstThreadUserId = (threads?.threads ?? [])
+        .map((row) => getRecordId(row))
+        .find((value): value is string => Boolean(value));
+      if (firstThreadUserId) {
+        setSelectedThreadUserId(firstThreadUserId);
+      }
+    }
+  }, [selectedThreadUserId, threads?.threads]);
+
+  useEffect(() => {
+    if (!selectedGroupThreadId) {
+      const firstGroupThreadId = (groupThreads?.threads ?? [])
+        .map((row) => getRecordId(row))
+        .find((value): value is string => Boolean(value));
+      if (firstGroupThreadId) {
+        setSelectedGroupThreadId(firstGroupThreadId);
+        setGroupMessageForm((prev) => ({ ...prev, threadId: firstGroupThreadId }));
+      }
+    }
+  }, [groupThreads?.threads, selectedGroupThreadId]);
+
+  useEffect(() => {
+    if (!hasMounted || !isHydrated || !accessToken || !selectedThreadUserId) {
+      return;
+    }
+
+    void loadThread(selectedThreadUserId);
+  }, [accessToken, hasMounted, isHydrated, selectedThreadUserId]);
+
+  useEffect(() => {
+    if (!hasMounted || !isHydrated || !accessToken || !selectedGroupThreadId) {
+      return;
+    }
+
+    void loadGroupThreadDetail(selectedGroupThreadId);
+  }, [accessToken, hasMounted, isHydrated, selectedGroupThreadId]);
+
+  const recommendationRows = recommendations?.recommendations ?? [];
+  const workoutRows = workouts?.workouts ?? [];
+  const threadRows = threads?.threads ?? [];
+  const groupThreadRows = groupThreads?.threads ?? [];
+  const selectedOperator = operatorOptions.find((option) => option.id === selectedUserId) ?? null;
+  const selectedThread = threadRows.find((row) => getRecordId(row) === selectedThreadUserId) ?? null;
+  const selectedGroupThread = groupThreadRows.find((row) => getRecordId(row) === selectedGroupThreadId) ?? null;
+
+  const refreshAll = async () => {
+    await loadDashboard();
+    if (selectedUserId) {
+      await loadSelectedUser(selectedUserId);
+    }
+    if (selectedThreadUserId) {
+      await loadThread(selectedThreadUserId);
+    }
+    if (selectedGroupThreadId) {
+      await loadGroupThreadDetail(selectedGroupThreadId);
+    }
+  };
 
   const handleLogout = () => {
     logout();
     router.push("/");
   };
 
-  if (!hasMounted || !isAuthenticated) return null;
+  if (!hasMounted || !isHydrated || !isAuthenticated) {
+    return null;
+  }
 
   return (
-    <div className="flex h-screen w-screen bg-[#f0f4f9] dark:bg-[#070a13] text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200 overflow-hidden">
-      
-      {/* LEFT SIDEBAR */}
-      <aside className="w-64 bg-white dark:bg-[#0e1628] flex flex-col justify-between border-r border-slate-200 dark:border-white/5 flex-shrink-0 z-30">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#f0f4f9] font-sans text-slate-800 transition-colors duration-200 dark:bg-[#070a13] dark:text-slate-100">
+      <aside className="z-30 flex w-64 flex-shrink-0 flex-col justify-between border-r border-slate-200 bg-white dark:border-white/5 dark:bg-[#0e1628]">
         <div>
-          {/* Brand header */}
-          <div className="p-5 border-b border-slate-200 dark:border-white/5 flex items-center justify-between">
+          <div className="flex items-center justify-between border-b border-slate-200 p-5 dark:border-white/5">
             <div className="flex items-center gap-2">
-              <span className="size-2 rounded-full bg-[var(--brand-color)]"></span>
-              <span className="text-sm font-black tracking-tight text-slate-900 dark:text-white uppercase font-sans">
+              <span className="size-2 rounded-full bg-[var(--brand-color)]" />
+              <span className="font-sans text-sm font-black uppercase tracking-tight text-slate-900 dark:text-white">
                 SCS
               </span>
             </div>
           </div>
 
-          {/* Navigation Category 1 */}
-          <div className="px-5 pt-6 pb-2 text-[10px] font-bold text-slate-400 tracking-widest uppercase font-sans">
+          <div className="px-5 pb-2 pt-6 font-sans text-[10px] font-bold uppercase tracking-widest text-slate-400">
             Workspace
           </div>
 
-          <nav className="px-3 space-y-1">
+          <nav className="space-y-1 px-3">
             {[
               { id: "overview", label: "Overview", icon: Users },
               { id: "dashboard", label: "Dashboard", icon: TrendingUp },
               { id: "people", label: "People", icon: User },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id as TabType)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
-                    activeTab === item.id && !reviewingAirmanId
-                      ? "bg-[var(--brand-color)]/10 text-[var(--brand-color)]"
-                      : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
-                  }`}
-                >
-                  <Icon className="size-4" />
-                  {item.label}
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* Navigation Category 2 */}
-          <div className="px-5 pt-6 pb-2 text-[10px] font-bold text-slate-400 tracking-widest uppercase font-sans">
-            Plans & Coverage
-          </div>
-
-          <nav className="px-3 space-y-1">
-            {[
               { id: "plans", label: "Plans", icon: ClipboardList },
               { id: "coverage", label: "Coverage", icon: FileText },
               { id: "messages", label: "Messages", icon: MessageSquare },
@@ -404,11 +621,12 @@ export default function ScsDashboard() {
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id as TabType)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer text-left ${
-                    (activeTab === item.id || (item.id === "people" && reviewingAirmanId))
+                  className={`flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all duration-150 ${
+                    activeTab === item.id
                       ? "bg-[var(--brand-color)]/10 text-[var(--brand-color)]"
-                      : "text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-55/40 dark:hover:bg-slate-900/60"
+                      : "text-slate-500 hover:bg-slate-50/80 hover:text-slate-800 dark:hover:bg-slate-900/60 dark:hover:text-white"
                   }`}
+                  type="button"
                 >
                   <Icon className="size-4" />
                   {item.label}
@@ -418,18 +636,19 @@ export default function ScsDashboard() {
           </nav>
         </div>
 
-        {/* User Session control buttons */}
-        <div className="p-4 border-t border-slate-200 dark:border-white/5 space-y-2">
+        <div className="space-y-2 border-t border-slate-200 p-4 dark:border-white/5">
           <button
             onClick={() => router.push("/dashboard/profile")}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-55 dark:hover:bg-slate-900 transition cursor-pointer"
+            className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-white"
+            type="button"
           >
             <ArrowLeft className="size-4" />
             My profile
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-red-500 hover:text-red-600 hover:bg-red-55/20 dark:hover:bg-red-950/20 transition cursor-pointer"
+            className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-bold text-red-500 transition hover:bg-red-50/50 hover:text-red-600 dark:hover:bg-red-950/20"
+            type="button"
           >
             <LogOut className="size-4" />
             Log out
@@ -437,3124 +656,1575 @@ export default function ScsDashboard() {
         </div>
       </aside>
 
-      {/* WORKSPACE CONTENT WRAPPER */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        
-        {/* TOP HEADER */}
-        <header className="flex h-14 w-full items-center justify-between border-b border-slate-200 dark:border-white/5 bg-white dark:bg-[#0e1628] px-6 md:px-8 flex-shrink-0 z-20">
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <header className="z-20 flex h-14 w-full flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 dark:border-white/5 dark:bg-[#0e1628] md:px-8">
           <div className="flex items-center gap-2">
             <AscendLogo width={20} height={20} showDetails={false} />
             <span className="text-sm font-semibold tracking-tight text-slate-800 dark:text-white">Ascend</span>
-            <span className="text-xs text-slate-400 dark:text-slate-500 font-light select-none">/</span>
+            <span className="select-none text-xs font-light text-slate-400 dark:text-slate-500">/</span>
             <span className="text-xs font-medium text-slate-500 dark:text-slate-400">SCS performance workspace</span>
           </div>
 
           <div className="flex items-center gap-6">
-            <div className="flex items-center gap-4 border-r border-slate-200 dark:border-white/5 pr-6">
+            <div className="flex items-center gap-4 border-r border-slate-200 pr-6 dark:border-white/5">
               <IconButton
                 icon={Bell}
                 aria-label="Notifications"
-                className="relative p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
+                className="relative cursor-pointer p-1.5 text-slate-400 transition hover:text-slate-700 dark:hover:text-white"
                 iconClassName="size-4.5"
               >
-                <span className="absolute top-1 right-1 size-2 rounded-full bg-[var(--brand-color)] ring-2 ring-white dark:ring-[#0e1628]"></span>
+                <span className="absolute right-1 top-1 size-2 rounded-full bg-[var(--brand-color)] ring-2 ring-white dark:ring-[#0e1628]" />
               </IconButton>
               <IconButton
                 icon={theme === "light" ? Moon : Sun}
                 aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
                 onClick={toggleTheme}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
+                className="cursor-pointer p-1.5 text-slate-400 transition hover:text-slate-700 dark:hover:text-white"
                 iconClassName="size-4.5"
               />
             </div>
 
-            {/* Profile Context */}
-            <button
-              onClick={() => router.push("/dashboard/profile")}
-              className="flex items-center gap-3 cursor-pointer"
-              type="button"
-            >
-              <div className="text-right flex flex-col items-end">
-                <span className="text-xs font-bold text-slate-800 dark:text-white block">{currentUser?.name}</span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-tight font-sans">{currentUser?.unit}</span>
+            <button onClick={() => router.push("/dashboard/profile")} className="flex items-center gap-3" type="button">
+              <div className="flex flex-col items-end text-right">
+                <span className="block text-xs font-bold text-slate-800 dark:text-white">{currentUser?.name}</span>
+                <span className="block font-sans text-[10px] leading-tight text-slate-400 dark:text-slate-500">{currentUser?.unit}</span>
               </div>
-              <div className="size-8 rounded-full bg-cyan-500 text-white font-sans font-black text-xs flex items-center justify-center select-none border border-slate-200 dark:border-white/5">
+              <div className="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-cyan-500 font-sans text-xs font-black text-white dark:border-white/5">
                 {currentUser?.initials}
               </div>
             </button>
           </div>
         </header>
 
-        {/* CUI BANNER */}
-        <div className="h-6 w-full bg-slate-900 border-b border-slate-800 flex items-center justify-center px-6 text-[9px] font-mono tracking-wider text-slate-500 flex-shrink-0 select-none z-10 font-sans">
-          <span className="text-[var(--brand-color)] mr-2 font-black">•</span>
-          {reviewingAirmanId ? `CUI // OPSEC · Roster view · J. Reyes drill-in · audit logged` : `CUI // OPSEC · Messages are audit-logged · SCS flight`}
+        <div className="z-10 flex h-6 w-full flex-shrink-0 items-center justify-center border-b border-slate-800 bg-slate-900 px-6 font-sans text-[9px] font-mono tracking-wider text-slate-500 select-none">
+          <span className="mr-2 text-[var(--brand-color)]">•</span>
+          CUI // OPSEC · Live SCS data only · Messages and coverage actions are audit-logged
         </div>
 
-        {/* MAIN VIEWPORT */}
-        <main className="flex-1 overflow-y-auto bg-[#f8fafc] dark:bg-[#070a13] px-6 py-8 md:px-8 space-y-8">
-          
-          {/* Active Profile detail (J. Reyes drill-in detail) */}
-          {reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Back navigation */}
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/5 pb-4">
-                <button 
-                  onClick={() => setReviewingAirmanId(null)}
-                  className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white transition cursor-pointer"
+        <main className="flex-1 space-y-8 overflow-y-auto bg-[#f8fafc] px-6 py-8 dark:bg-[#070a13] md:px-8">
+          <SectionTitle
+            kicker="Human Performance"
+            title="SCS Operations"
+            description="Leadership-safe visuals stay intact, while every panel now reads and writes against the real SCS backend."
+            actions={
+              <>
+                <button
+                  onClick={() => void refreshAll()}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+                  type="button"
                 >
-                  <ArrowLeft className="size-4" /> Back to People roster
+                  Refresh
                 </button>
+                <button
+                  onClick={() => setShowCoverageModal(true)}
+                  className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white"
+                  type="button"
+                >
+                  Log coverage
+                </button>
+              </>
+            }
+          />
 
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => { setActiveTab("messages"); setSelectedChatId("J. Reyes"); setReviewingAirmanId(null); }}
-                    className="px-3.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition cursor-pointer"
-                  >
-                    Message
-                  </button>
-                  <button 
-                    onClick={() => { setActiveTab("coverage"); setReviewingAirmanId(null); }}
-                    className="px-3.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition cursor-pointer"
-                  >
-                    Coverage
-                  </button>
-                  <button 
-                    onClick={() => { setActiveTab("plans"); setReviewingAirmanId(null); }}
-                    className="px-3.5 py-1.5 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    Assign plan
-                  </button>
-                </div>
-              </div>
+          {error && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-500/20 dark:bg-rose-950/20">
+              {error}
+            </div>
+          )}
 
-              {/* Patient header context banner */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-2xl font-black text-slate-800 dark:text-white leading-tight">J. Reyes</h2>
-                      <span className="px-2 py-0.5 bg-rose-500/10 text-rose-500 text-[9px] font-bold rounded">
-                        L4
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-sans">
-                      SrA &middot; L4 lower back pain &middot; PT/IM duty restriction: limited duty &middot; 4 yr TIS &middot; k=1 view &middot; {POPULATION_LEVELS.INDIVIDUAL} (not cohort eligible)
-                    </p>
+          {loading ? (
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-32 animate-pulse rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/5 dark:bg-[#0e1628]"
+                />
+              ))}
+            </div>
+          ) : (
+            <>
+              {activeTab === "overview" && (
+                <div className="space-y-6">
+                  <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+                    <MetricCard title="Assigned Count" value={formatNumber(dashboard?.assigned_count)} subtext="Current SCS-assigned operators from `/dashboard/scs`." />
+                    <MetricCard title="Checked In Today" value={formatNumber(dashboard?.checked_in_today_count)} subtext="Today’s completed check-ins." />
+                    <MetricCard title="Missed Check-ins" value={formatNumber(dashboard?.missed_checkin_today_count)} subtext="Missed today according to the backend." accent="text-rose-500" />
+                    <MetricCard title="Low Ops Count" value={formatNumber(dashboard?.low_ops_count)} subtext="Operators currently flagged low readiness." accent="text-amber-500" />
                   </div>
-                </div>
 
-                {/* Circular OFE gauge and detail summary block */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-5 items-center">
-                  
-                  {/* Gauge */}
-                  <div className="flex items-center gap-4">
-                    <div className="relative size-20 flex items-center justify-center">
-                      <svg className="size-full" viewBox="0 0 36 36">
-                        <path className="text-slate-100 dark:text-slate-800" strokeWidth="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                        <path className="text-[var(--brand-color)]" strokeWidth="3" strokeDasharray="77, 100" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                      </svg>
-                      <div className="absolute flex flex-col items-center">
-                        <span className="text-xl font-black text-slate-800 dark:text-white">54</span>
-                        <span className="text-[7px] text-slate-400 font-bold uppercase tracking-wider">OFE &middot; 70</span>
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <Card className="xl:col-span-2">
+                      <CardHeader title="Workout Summary" subtitle="Read-only live summary for the scoped SCS role." />
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <MetricCard title="Sessions" value={formatNumber(workoutSummary?.total_sessions)} subtext={`${formatNumber(workoutSummary?.range_days)} day range`} />
+                        <MetricCard title="Completed" value={formatNumber(workoutSummary?.completed_sessions)} subtext="Logged completed sessions." />
+                        <MetricCard title="Missed" value={formatNumber(workoutSummary?.missed_sessions)} subtext="Sessions missed in range." accent="text-rose-500" />
+                        <MetricCard title="Minutes" value={formatNumber(workoutSummary?.total_duration_minutes)} subtext={workoutSummary?.recent_adherence_label ?? "No adherence label returned."} />
                       </div>
-                    </div>
-                    <div className="text-left font-sans text-xs">
-                      <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">28 day OFE trend</span>
-                      <span className="font-bold text-rose-500 block leading-tight mt-0.5 inline-flex items-center gap-1">
-                        <span aria-hidden="true" className="inline-block border-l-4 border-r-4 border-t-[6px] border-l-transparent border-r-transparent border-t-rose-500"></span>
-                        Declining &mdash; vs 7d
-                      </span>
-                      <span className="text-[10px] text-rose-500 block">&mdash; vs 30d</span>
-                    </div>
-                  </div>
-
-                  {/* Summary notes */}
-                  <div className="text-left space-y-1 font-sans text-xs col-span-2">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Confidence &middot; Plan details</span>
-                    <p className="text-slate-700 dark:text-slate-300">
-                      Confidence score: <span className="font-bold text-emerald-500">High</span> (11 of last 14 days). PT/IM clinical visits: last 30d: 2.
-                    </p>
-                    <p className="text-[10px] text-slate-500">
-                      Reconditioning: <span className="font-bold text-[var(--brand-color)]">Rehab Block 2</span> &middot; ends 8 Aug. Functional limitation: lower-back, load-bearing (PT/IM-owned).
-                    </p>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* Navigation tabs inside J Reyes details */}
-              <div className="flex gap-4 border-b border-slate-100 dark:border-white/5 pb-2 text-xs font-bold text-left select-none">
-                {(["Overview", "Trends", "Plans", "Records", "Notes"] as const).map((tabName, i) => (
-                  <span
-                    key={i}
-                    onClick={() => setPersonTab(tabName)}
-                    className={`cursor-pointer pb-1 border-b-2 transition ${
-                      personTab === tabName
-                        ? "border-[var(--brand-color)] text-[var(--brand-color)]"
-                        : "border-transparent text-slate-400 hover:text-slate-700"
-                    }`}
-                  >
-                    {tabName}
-                  </span>
-                ))}
-              </div>
-
-              {/* Split layout parameters - rendered per active sub-tab */}
-              {personTab === "Overview" && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                
-                {/* Left Side: Drivers and Recommendations */}
-                <div className="lg:col-span-8 space-y-6">
-                  
-                  {/* Drivers bar values */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                    <div className="text-left">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Drivers - 14d</h3>
-                      <p className="text-[9px] text-slate-500">OFE metrics domains &middot; k=1 scope</p>
-                    </div>
-
-                    <div className="space-y-4 font-sans text-xs text-left">
-                      {[
-                        { label: "Physical", val: "63.6", fill: "65%", col: "bg-cyan-500" },
-                        { label: "Sleep", val: "55.2", fill: "55%", col: "bg-cyan-500" },
-                        { label: "Mental", val: "52.1", fill: "50%", col: "bg-blue-500", gated: PRIVACY_STATES.AUTH_REQUIRED },
-                        { label: "Nutritional", val: "69.2", fill: "70%", col: "bg-amber-500" },
-                        { label: "Spiritual", val: "74.0", fill: "75%", col: "bg-yellow-500", gated: PRIVACY_STATES.CONSENT_REQUIRED }
-                      ].map((dr, idx) => (
-                        <div key={idx} className="space-y-1.5">
-                          <div className="flex justify-between items-baseline font-mono text-[10px]">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{dr.label}</span>
-                            {dr.gated ? (
-                              <span className="px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[8px] font-bold rounded uppercase tracking-wider">
-                                {dr.gated}
-                              </span>
-                            ) : (
-                              <span>{dr.val}</span>
-                            )}
-                          </div>
-                          {dr.gated ? (
-                            <p className="text-[9px] text-slate-500 leading-relaxed font-sans">
-                              MP/PC authorized-pathway data &mdash; not visible to SCS until authorized.
-                            </p>
-                          ) : (
-                            <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${dr.col}`} style={{ width: dr.fill }}></div>
+                      <div className="mt-5 space-y-3 text-xs">
+                        {Object.entries(workoutSummary?.by_activity_type ?? {}).length === 0 ? (
+                          <EmptyState label="No workout activity breakdown is currently available from the backend." />
+                        ) : (
+                          Object.entries(workoutSummary?.by_activity_type ?? {}).map(([key, value]) => (
+                            <div key={key} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 dark:border-white/5 dark:bg-slate-900/50">
+                              <span className="font-semibold text-slate-700 dark:text-slate-200">{key}</span>
+                              <span className="font-mono text-slate-500">{formatNumber(value)}</span>
                             </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                          ))
+                        )}
+                      </div>
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Selected Operator" subtitle="User-scoped records for the currently selected operator." />
+                      <SimpleKeyValueList
+                        rows={[
+                          { label: "Operator", value: selectedOperator?.name ?? currentUser?.name ?? "—" },
+                          { label: "Assignment", value: selectedOperator?.subtitle ?? currentUser?.unit ?? "—" },
+                          { label: "OFT status", value: oftRecord?.current_status ?? "—" },
+                          { label: "Latest result", value: oftRecord?.latest_pass_fail ?? "—" },
+                          { label: "Latest test", value: formatDate(oftRecord?.latest_test_date) },
+                          { label: "Next scheduled", value: formatDate(oftRecord?.next_scheduled_date) },
+                          { label: "Annual tests", value: formatNumber(oftRecord?.annual_test_count) },
+                        ]}
+                      />
+                    </Card>
                   </div>
 
-                  {/* Recommendations */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                      <div>
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">Recommendations</h3>
-                        <p className="text-[9px] text-slate-500">Coordinated with PT/IM &middot; next sync 14:00</p>
-                      </div>
-                      <button
-                        onClick={() => setShowPlanModal(true)}
-                        className="px-2 py-0.5 bg-[var(--brand-color)] text-white rounded text-[10px] font-bold transition hover:bg-[var(--brand-color-hover)] cursor-pointer"
-                      >
-                        + Plan
-                      </button>
-                    </div>
-
-                    <div className="space-y-3">
-                      {[
-                        { title: "L4 REDUCE LOAD", body: "Sub-80% 1RM lifts; mobility focus daily. Coordinated with PT/IM.", link: "View plan \u2192", col: "red" },
-                        { title: "Sleep anchor", body: "Target 7h within 30 min of anchor time for 7 days. Check-in Friday AM.", col: "orange" },
-                        { title: "Mental readiness \u2014 training implication", body: "Check load tolerance before tempo sessions. Not a mental health flag \u2014 refers to readiness for high-tempo work.", col: "blue" }
-                      ].map((rec, i) => (
-                        <div key={i} className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl text-left space-y-1">
-                          <h4 className={`text-xs font-bold inline-flex items-center gap-1.5 ${
-                            rec.col === "red" ? "text-rose-500" :
-                            rec.col === "orange" ? "text-amber-500" : "text-sky-500"
-                          }`}>
-                            {rec.title}
-                          </h4>
-                          <p className="text-[11px] text-slate-700 dark:text-slate-400 leading-relaxed font-sans">{rec.body}</p>
-                          {rec.link && <span className="text-[var(--brand-color)] font-bold block mt-1 hover:underline cursor-pointer">{rec.link}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* Right Side: Assigned Plan & Events history */}
-                <div className="lg:col-span-4 space-y-6">
-                  
-                  {/* Assigned plan card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                    <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/5 pb-3">
-                      <div className="text-left">
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">Assigned plan &mdash; Rehab Block 2</h3>
-                        <p className="text-[9px] text-slate-500">SCS + PT/IM &middot; 22 Jul - 8 Aug &middot; week 1 of 3</p>
-                      </div>
-                      <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded-full uppercase">
-                        {PLAN_STATUSES.PENDING_REVIEW}
-                      </span>
-                    </div>
-
-                    <div className="space-y-3 font-sans text-xs text-left">
-                      <span className="text-[8px] font-bold text-slate-500 block uppercase tracking-widest font-mono">Block 1 - Lower back reconditioning</span>
-                      <div className="space-y-2">
-                        {[
-                          { txt: "Daily mobility reset - 12 min", col: "green" },
-                          { txt: "Sub-60% 1RM deadlift x 3", col: "green" },
-                          { txt: "Mobility 3 x 4 sets", col: "orange" },
-                          { txt: "Loaded carry progression", col: "blue" }
-                        ].map((planTask, i) => (
-                          <div key={i} className="flex items-center gap-2">
-                            <span className={`size-1.5 rounded-full ${
-                              planTask.col === "green" ? "bg-emerald-500" :
-                              planTask.col === "orange" ? "bg-amber-500" : "bg-sky-500"
-                            }`}></span>
-                            <span className="text-slate-700 dark:text-slate-300">{planTask.txt}</span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[10px]">
-                        <span className="text-slate-400">Compliance</span>
-                        <span className="font-mono font-bold text-slate-800 dark:text-white text-xs">71%</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-white/5">
-                      <button
-                        onClick={() => {
-                          setEditingPlanBlock(true);
-                          setEditingPlanDraft({
-                            title: "Rehab Block 2",
-                            badge: "Rehab · Active",
-                            desc: "Lower back reconditioning block 1 (week 1 of 3).",
-                            details: "Daily mobility reset - 12 min · Sub-60% 1RM deadlift x 3 · Mobility 3 x 4 sets · Loaded carry progression.",
-                            cad: "3x/wk · 45 min",
-                            win: "22 Jul - 8 Aug · 3 blocks",
-                            owner: "SCS + PT/IM",
-                          });
-                          triggerToast("Edit Rehab Block 2 wizard opened");
-                        }}
-                        className="py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 hover:bg-slate-50 text-xs font-bold rounded-lg text-slate-700 dark:text-slate-300 transition cursor-pointer"
-                      >
-                        Edit plan
-                      </button>
-                      <button onClick={() => setShowPerfNoteModal(true)} className="py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 hover:bg-slate-50 text-xs font-bold rounded-lg text-slate-700 dark:text-slate-300 transition cursor-pointer">
-                        Add performance note
-                      </button>
-                    </div>
-
-                    {editingPlanBlock && editingPlanDraft && (
-                      <div className="mt-3 p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl text-left space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider font-sans">Edit inline · Rehab Block 2</span>
-                          <button
-                            onClick={() => { setEditingPlanBlock(false); setEditingPlanDraft(null); }}
-                            className="text-[10px] font-bold text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
-                            aria-label="Close edit panel"
-                          >
-                            Close
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="block space-y-1">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider font-sans block">Title</span>
-                            <input
-                              type="text"
-                              value={editingPlanDraft.title}
-                              onChange={(e) => setEditingPlanDraft({ ...editingPlanDraft, title: e.target.value })}
-                              className="w-full px-3 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white"
-                            />
-                          </label>
-                          <label className="block space-y-1">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider font-sans block">Description</span>
-                            <textarea
-                              rows={2}
-                              value={editingPlanDraft.desc}
-                              onChange={(e) => setEditingPlanDraft({ ...editingPlanDraft, desc: e.target.value })}
-                              className="w-full px-3 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white resize-none"
-                            />
-                          </label>
-                          <label className="block space-y-1">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider font-sans block">Cadence</span>
-                            <input
-                              type="text"
-                              value={editingPlanDraft.cad}
-                              onChange={(e) => setEditingPlanDraft({ ...editingPlanDraft, cad: e.target.value })}
-                              className="w-full px-3 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white font-mono"
-                            />
-                          </label>
-                          <label className="block space-y-1">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider font-sans block">Owner</span>
-                            <input
-                              type="text"
-                              value={editingPlanDraft.owner}
-                              onChange={(e) => setEditingPlanDraft({ ...editingPlanDraft, owner: e.target.value })}
-                              className="w-full px-3 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white"
-                            />
-                          </label>
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (editingPlanDraft) {
-                              setPerformancePlans((prev) => [editingPlanDraft, ...prev]);
-                            }
-                            setEditingPlanBlock(false);
-                            setEditingPlanDraft(null);
-                            triggerToast("Plan changes saved");
-                          }}
-                          className="w-full py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                        >
-                          Save changes
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Recent Activity logs */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Recent activity - 7 events</h3>
-                      <p className="text-[9px] text-slate-500">Audit logged &middot; last 7 days</p>
-                    </div>
-
-                    <div className="overflow-x-auto text-[10px] text-left">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="border-b border-slate-100 dark:border-white/5 text-[8px] font-bold uppercase tracking-wider text-slate-400 font-sans">
-                            <th className="pb-2">Time</th>
-                            <th className="pb-2">Actor</th>
-                            <th className="pb-2 text-right">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50 dark:divide-white/5 font-mono text-[9px]">
-                          {[
-                            { time: "28 Jul - 06:42", actor: "TSgt Lee", act: "Reviewed OFE data" },
-                            { time: "27 Jul - 14:11", actor: "TSgt Lee", act: "Sent msg - mobility reset" },
-                            { time: "26 Jul - 09:20", actor: "System", act: "Routed to PT/IM - L4 pain" },
-                            { time: "24 Jul - 17:08", actor: "Capt Shah", act: "Cleared limited duty" },
-                            { time: "22 Jul - 10:00", actor: "TSgt Lee", act: "Updated plan" },
-                            { time: "20 Jul - 08:30", actor: "System", act: "OFE completed - 54" },
-                            { time: "18 Jul - 16:30", actor: "A. Mendez", act: "Peer-acknowledged" }
-                          ].map((actRow, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/20 transition">
-                              <td className="py-2 text-slate-500">{actRow.time}</td>
-                              <td className="py-2 text-slate-700 dark:text-slate-300 font-sans font-bold">{actRow.actor}</td>
-                              <td className="py-2 text-right text-slate-500 font-sans">{actRow.act}</td>
-                            </tr>
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <Card>
+                      <CardHeader title="Active Recommendations" subtitle="Assignments returned by `/recommendations/active`." />
+                      {recommendationRows.length === 0 ? (
+                        <EmptyState label="No active recommendations are returned for this SCS login right now." />
+                      ) : (
+                        <div className="space-y-3">
+                          {recommendationRows.slice(0, 6).map((row, index) => (
+                            <div key={String(getRecordId(row) ?? index)} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900 dark:text-white">{getRecordTitle(row)}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{getRecordSubtitle(row)}</p>
+                                </div>
+                                <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone(String(getRecordValue(row, ["status", "state"])))}`}>
+                                  {stringifyValue(getRecordValue(row, ["status", "state"]))}
+                                </span>
+                              </div>
+                              <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                                {stringifyValue(getRecordValue(row, ["instructions", "summary", "body", "description"]))}
+                              </p>
+                            </div>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        </div>
+                      )}
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Coverage Snapshot" subtitle="Real coverage load by flight; no mock heatmap or capacity columns." />
+                      <SimpleKeyValueList
+                        rows={[
+                          { label: "Min cohort size", value: formatNumber(coverageLoad?.min_cohort_size) },
+                          { label: "Total flights", value: formatNumber(coverageLoad?.total_flights) },
+                          { label: "Flights meeting minimum", value: formatNumber(coverageLoad?.flights_meeting_cohort_minimum) },
+                          { label: "Flights returned", value: formatNumber(coverageLoad?.flights.length) },
+                        ]}
+                      />
+                    </Card>
                   </div>
-
                 </div>
-
-              </div>
               )}
 
-              {personTab === "Trends" && (
+              {activeTab === "dashboard" && (
                 <div className="space-y-6">
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">OFE trend · 14d / 28d</h3>
-                      <p className="text-[9px] text-slate-500">Drivers · OFE composite · sleep duration (h)</p>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase block tracking-wider">OFE composite · 14d</span>
-                        <div className="flex items-end justify-between h-24 px-1 gap-1">
-                          {[48, 50, 52, 49, 54, 51, 53, 55, 52, 54, 56, 53, 54, 54].map((h, idx) => (
-                            <div key={idx} style={{ height: `${h}%` }} className="flex-1 bg-cyan-500/80 rounded-t"></div>
-                          ))}
-                        </div>
-                        <span className="text-[9px] font-mono text-slate-500 block">7d avg: 54.0 · 14d avg: 52.9</span>
-                      </div>
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase block tracking-wider">OFE composite · 28d</span>
-                        <div className="flex items-end justify-between h-24 px-1 gap-1">
-                          {[56, 55, 54, 52, 53, 51, 50, 52, 49, 54, 51, 53, 55, 52, 54, 56, 53, 54, 54, 52, 50, 49, 51, 53, 55, 52, 54, 54].map((h, idx) => (
-                            <div key={idx} style={{ height: `${h}%` }} className="flex-1 bg-cyan-500/60 rounded-t"></div>
-                          ))}
-                        </div>
-                        <span className="text-[9px] font-mono text-slate-500 block">28d avg: 52.6 · declining</span>
-                      </div>
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase block tracking-wider">Sleep duration (h) · 14d</span>
-                        <div className="flex items-end justify-between h-24 px-1 gap-1">
-                          {[7.5, 7.0, 6.5, 7.2, 6.8, 7.5, 7.3, 7.0, 6.5, 7.2, 6.8, 7.5, 7.3, 7.0].map((h, idx) => (
-                            <div key={idx} style={{ height: `${(h / 9) * 100}%` }} className="flex-1 bg-blue-500/70 rounded-t"></div>
-                          ))}
-                        </div>
-                        <span className="text-[9px] font-mono text-slate-500 block">avg: 7.07 h · anchor 22:30</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {personTab === "Plans" && (
-                <div className="space-y-6">
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                    <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/5 pb-3">
-                      <div className="text-left">
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">Assigned plan &mdash; Rehab Block 2</h3>
-                        <p className="text-[9px] text-slate-500">SCS + PT/IM &middot; 22 Jul - 8 Aug &middot; week 1 of 3</p>
-                      </div>
-                      <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 text-[9px] font-bold rounded-full uppercase tracking-wider font-mono">
-                        71% compliance
-                      </span>
-                    </div>
-                    <div className="space-y-2 font-sans text-xs">
-                      {[
-                        { txt: "Daily mobility reset - 12 min", col: "green" },
-                        { txt: "Sub-60% 1RM deadlift x 3", col: "green" },
-                        { txt: "Mobility 3 x 4 sets", col: "orange" },
-                        { txt: "Loaded carry progression", col: "blue" }
-                      ].map((planTask, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className={`size-1.5 rounded-full ${
-                            planTask.col === "green" ? "bg-emerald-500" :
-                            planTask.col === "orange" ? "bg-amber-500" : "bg-sky-500"
-                          }`}></span>
-                          <span className="text-slate-700 dark:text-slate-300">{planTask.txt}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-white/5">
-                      <button
-                        onClick={() => {
-                          setEditingPlanBlock(true);
-                          setEditingPlanDraft({
-                            title: "Rehab Block 2",
-                            badge: "Rehab · Active",
-                            desc: "Lower back reconditioning block 1 (week 1 of 3).",
-                            details: "Daily mobility reset - 12 min · Sub-60% 1RM deadlift x 3 · Mobility 3 x 4 sets · Loaded carry progression.",
-                            cad: "3x/wk · 45 min",
-                            win: "22 Jul - 8 Aug · 3 blocks",
-                            owner: "SCS + PT/IM",
-                          });
-                          triggerToast("Edit Rehab Block 2 wizard opened");
-                        }}
-                        className="py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 hover:bg-slate-50 text-xs font-bold rounded-lg text-slate-700 dark:text-slate-300 transition cursor-pointer"
-                      >
-                        Edit plan
-                      </button>
-                      <button onClick={() => setShowPerfNoteModal(true)} className="py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 hover:bg-slate-50 text-xs font-bold rounded-lg text-slate-700 dark:text-slate-300 transition cursor-pointer">
-                        Add performance note
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {personTab === "Records" && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-2 text-left">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block">OFT clearance</span>
-                    <span className="font-bold text-rose-500 block text-sm">NC - Not Cleared</span>
-                    <span className="text-[10px] text-slate-500 block">15 Jul · score 71/100 · next due 22 Jul</span>
-                  </div>
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-2 text-left">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block">Visit log</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300 block text-sm">3 visits · last 30d</span>
-                    <span className="text-[10px] text-slate-500 block">27 Jul Capt Chen · 22 Jul Capt Chen · 14 Jul SSgt Lin</span>
-                  </div>
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-2 text-left">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block">Performance summary</span>
-                    <span className="font-bold text-emerald-500 block text-sm">Authorized · versioned</span>
-                    <span className="text-[10px] text-slate-500 block">PT/IM approved · minimum-necessary</span>
-                  </div>
-                </div>
-              )}
-
-              {personTab === "Notes" && (
-                <div className="space-y-3">
-                  {[
-                    { title: "Wind-down anchor", body: "Dim-evening routine holding. Lights low by 21:30, anchor at 22:30.", tag: "Sleep" },
-                    { title: "Sleep diary", body: "7.5 h average. Daytime alertness improved per self-report.", tag: "Sleep" },
-                    { title: "Mobility reset adherence", body: "Completed 5 of last 7 days. Lower back reports easier mornings.", tag: "Compliance" }
-                  ].map((noteRow, i) => (
-                    <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-4 shadow-sm text-left space-y-1">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-xs font-bold text-slate-800 dark:text-white">{noteRow.title}</h4>
-                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-900 text-slate-500 text-[8px] font-bold rounded uppercase">{noteRow.tag}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed font-sans">{noteRow.body}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* OFT clearance complete record banner */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">OFT clearance &middot; complete record</h3>
-                    <p className="text-[9px] text-slate-500">Test date · status · score · exemption · next due · reconditioning · linked plan</p>
-                  </div>
-                  <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded-full uppercase tracking-wider font-mono">
-                    NC &middot; Reconditioning
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 text-xs font-sans">
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Test Date</span>
-                    <span className="font-bold text-slate-800 dark:text-white">15 Jul</span>
-                    <span className="text-[10px] text-slate-500 block leading-tight font-mono">Lane 2 - tempo</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Status</span>
-                    <span className="font-bold text-rose-500 block">NC - Not Cleared</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">Pass/Fail: Fail</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Score</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300 block">71 / 100</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">Score-entry logged</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Exemption Reason</span>
-                    <span className="font-bold text-slate-500 block">N/A</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">&mdash;</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Next Due</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300 block">22 Jul</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">Reconditioning window</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Reconditioning</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300 block">Block 1 - week 1</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">Sub-60% 1RM</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase block font-sans">Sign-Off</span>
-                    <span className="font-bold text-amber-500 block">Capt Shah</span>
-                    <span className="text-[10px] text-slate-500 block font-mono">Pending review</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Operational facts card split with RTD paths card */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
-                
-                {/* Facts */}
-                <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Operational facts</h3>
-                    <p className="text-[9px] text-slate-500">Single airman &middot; k=1 &middot; read-only</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-0.5">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Next PT session</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">Today - 11:00</span>
-                      <span className="text-[10px] text-slate-500 block">Rehab &middot; TSgt Lee</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Last PT visit</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">27 Jul &middot; Capt Shah</span>
-                      <span className="text-[10px] text-[var(--brand-color)] block">PT/IM visit note</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Leave next 30d</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">None scheduled</span>
-                      <span className="text-[10px] text-slate-500 block">All-clear &middot; 0 conflicts</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Authorized</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">Performance Summary</span>
-                      <span className="text-[10px] text-slate-500 block">PT/IM-approved</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* RTP + RTD guide guidelines */}
-                <div className="bg-[#f8fafc] dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 text-left text-xs space-y-3 font-sans">
-                  <span className="font-bold text-slate-800 dark:text-white block uppercase tracking-wider text-[9px]">RTP + RTD &mdash; separate paths</span>
-                  <div className="space-y-2">
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-[var(--brand-color)] block">RTP (Return to Performance)</span>
-                      <p className="text-slate-500 leading-normal font-normal">
-                        Managed in Ascend: SCS adjusts training load + reconditioning only.
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-amber-500 block">RTD (Return to Duty)</span>
-                      <p className="text-slate-500 leading-normal font-normal font-sans">
-                        Requires source-authority + decision date + verification + reevaluation/expiration. SCS never edits it.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Workouts log table */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div>
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">Recent workouts &middot; 7 events</h3>
-                  <p className="text-[9px] text-slate-500">Status &middot; date &middot; type &middot; duration &middot; RPE &middot; linked plan &middot; applied limitation &middot; review</p>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Status</th>
-                        <th className="pb-3">Date</th>
-                        <th className="pb-3">Type</th>
-                        <th className="pb-3 text-right">Duration</th>
-                        <th className="pb-3 text-right">RPE</th>
-                        <th className="pb-3">Linked Plan</th>
-                        <th className="pb-3 w-1/4">Applied Limitation</th>
-                        <th className="pb-3 text-right">Review</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-sans">
-                      {[
-                        { status: "Done", date: "28 Jul", type: "Rehab - McGill Big 3", dur: "32 min", rpe: "6", plan: "Rehab Block 2", lim: "Sub-80% 1RM deadlift", rev: "Reviewed", col: "green" },
-                        { status: "Done", date: "27 Jul", type: "Mobility reset", dur: "10 min", rpe: "3", plan: "Rehab Block 2", lim: "\u2014", rev: "Reviewed", col: "green" },
-                        { status: "Modified", date: "25 Jul", type: "Tempo run", dur: "24 min", rpe: "5", plan: "OFT Tempo Prep", lim: "HR cap: 165", rev: "Pending", col: "orange" },
-                        { status: "Skipped", date: "24 Jul", type: "Loaded carry", dur: "\u2014", rpe: "\u2014", plan: "Rehab Block 2", lim: "L4 lower back", rev: REVIEW_STATUS.PENDING, col: "blue" },
-                        { status: "Done", date: "22 Jul", type: "Deadlift", dur: "45 min", rpe: "8", plan: "Rehab Block 2", lim: "Sub-80% 1RM", rev: "Reviewed", col: "green" },
-                        { status: "Done", date: "20 Jul", type: "Mobility reset", dur: "10 min", rpe: "2", plan: "Rehab Block 2", lim: "\u2014", rev: "Reviewed", col: "green" },
-                        { status: "Done", date: "18 Jul", type: "McGill Big 3", dur: "25 min", rpe: "5", plan: "Rehab Block 2", lim: "\u2014", rev: "Reviewed", col: "green" }
-                      ].map((workRow, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-2.5">
-                            <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                              workRow.col === "green" ? "bg-emerald-500/10 text-emerald-500" :
-                              workRow.col === "orange" ? "bg-amber-500/10 text-amber-500" : "bg-sky-500/10 text-sky-500"
-                            }`}>
-                              {workRow.status}
-                            </span>
-                          </td>
-                          <td className="py-2.5 font-mono text-slate-500">{workRow.date}</td>
-                          <td className="py-2.5 font-bold text-slate-700 dark:text-slate-300">{workRow.type}</td>
-                          <td className="py-2.5 text-right font-mono text-slate-500">{workRow.dur}</td>
-                          <td className="py-2.5 text-right font-mono text-slate-500">{workRow.rpe}</td>
-                          <td className="py-2.5 text-slate-700 dark:text-slate-300">{workRow.plan}</td>
-                          <td className="py-2.5 text-slate-500 leading-normal">{workRow.lim}</td>
-                          <td className="py-2.5 text-right text-slate-500 font-medium">{workRow.rev}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* View Authorized performance summary block */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left flex flex-col md:flex-row md:items-center justify-between gap-4 font-sans text-xs">
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-slate-800 dark:text-white flex items-center gap-1.5">
-                    View Authorized Performance Summary
-                    <span className="px-2 py-0.2 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded">
-                      Summary: Authorized access
-                    </span>
-                    <span className="px-2 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[8px] font-bold rounded">
-                      Raw record: {PRIVACY_STATES.RESTRICTED}
-                    </span>
-                  </h4>
-                  <p className="text-slate-500 leading-normal">
-                    PT/IM approved &middot; versioned &middot; minimum-necessary &middot; time-limited &middot; named audiences.
-                  </p>
-                  <p className="text-[10px] text-slate-500">
-                    Open the read-only Performance Summary to view scoping, drivers, and current recommendations. SCS does not open raw medical files.
-                  </p>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={() => setViewingSummary(true)} className="px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl font-bold transition">
-                    View Summary
-                  </button>
-                  <button onClick={() => setViewingAuditLog(true)} className="px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-slate-700 dark:text-slate-300 font-bold transition hover:bg-slate-50">
-                    Audit log
-                  </button>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="text-[10px] text-slate-400 select-none font-mono text-left pt-2">
-                Ascend &middot; SCS Workspace prototype
-              </div>
-
-            </div>
-          )}
-
-           {/* Tab 1: OVERVIEW TAB */}
-          {activeTab === "overview" && !reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Header Section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                <div className="text-left">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider uppercase font-mono">SCS · Workspace</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">Strength & Conditioning</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                    Queue, drill-in, plans, coverage, and messages for the flight. Calm under load &mdash; decision-support, not dashboard noise.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-[9px] font-bold uppercase tracking-wider font-mono">
-                    Population: {POPULATION_LEVELS.CASELOAD}
-                  </span>
-                  <button
-                    onClick={() => setActiveTab("dashboard")}
-                    className="inline-flex items-center gap-1 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    Open queue &rarr;
-                  </button>
-                </div>
-              </div>
-
-              {/* ACTIONABLE WORK QUEUE — priority items first, clickable, opens filtered records (Req 3) */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Work Queue &middot; requires your action</h3>
-                  <span className="text-[9px] text-slate-500 font-mono">{POPULATION_LEVELS.CASELOAD}</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                  {[
-                    { name: ALERT_TYPES.NEW_ASSIGNMENT, count: "4", desc: "New to your caseload this week", tab: "people" as TabType, col: "teal" },
-                    { name: ALERT_TYPES.FOLLOW_UP_DUE, count: "6", desc: "Follow-up check due within 48h", tab: "people" as TabType, col: "orange" },
-                    { name: ALERT_TYPES.OVERDUE_ACTION, count: "3", desc: "Past due &mdash; review before 11:00", tab: "people" as TabType, col: "red" },
-                    { name: ALERT_TYPES.UNREAD_MESSAGE, count: "7", desc: "Unread in Messages", tab: "messages" as TabType, col: "teal" },
-                    { name: ALERT_TYPES.PLAN_REVIEW, count: "2", desc: "Awaiting PT/IM sign-off", tab: "plans" as TabType, col: "orange" }
-                  ].map((card, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setActiveTab(card.tab); triggerToast(`Opening ${card.name.toLowerCase()} queue`); }}
-                      className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/15 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
-                    >
-                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <div className="flex items-baseline gap-2">
-                        <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                        <span className={`text-[10px] font-bold ${
-                          card.col === "red" ? "text-rose-500" :
-                          card.col === "orange" ? "text-amber-500" : "text-[var(--brand-color)]"
-                        }`}>
-                          &rarr; open
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Flight snapshot — analytics, secondary to the work queue above */}
-              <div className="space-y-3">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot &middot; analytics</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                  {[
-                    { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
-                    { name: "Needs review", count: "14", desc: "+3 since Mon", col: "orange" },
-                    { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
-                    { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
-                  ].map((card, i) => (
-                    <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <div className="flex items-baseline gap-2">
-                        <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                        <span className={`text-[10px] font-bold ${
-                          card.col === "green" ? "text-emerald-500" :
-                          card.col === "orange" ? "text-amber-500" :
-                          card.col === "teal" ? "text-[var(--brand-color)]" : "text-slate-500"
-                        }`}>
-                          {card.desc.split(" since ")[0].split(" this ")[0].split(" cleared ")[0].split(" awaiting ")[0]}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Surfaces section header */}
-              <div className="text-left space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Surfaces</span>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">5 surfaces</h3>
-                <p className="text-xs text-slate-500 leading-normal">
-                  Last sync 06:42 &middot; all surfaces share one design system.
-                </p>
-              </div>
-
-              {/* 5 Surface directory cards grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 text-left">
-                {[
-                  { id: "dashboard", title: "Dashboard", sub: "Today's queue · KPI tiles · 14-day trend", body: "Queue-first view of 14 airmen needing attention, with the flight readiness curve and a recommendations strip." },
-                  { id: "people", title: "Person detail", sub: "J. Reyes · drill-in · trend · plans", body: "Airman drill-in: OPS ring, driver sparklines, recent activity, assigned plan, audit log." },
-                  { id: "plans", title: "Plans", sub: "Templates · assign · assignment queue", body: "Browse templates, draft 4-week reconditioning plans, push assignments to the flight." },
-                  { id: "coverage", title: "Coverage", sub: "PT sessions · OFT lanes · heatmap", body: "Workload by flight, SCS availability heatmap, OFT clearance status, upcoming PT sessions." },
-                  { id: "messages", title: "Messages", sub: "Thread list · composer · role-aware", body: "Secure thread list with role-aware filters, message detail pane, and an inline composer." }
-                ].map((sfc, idx) => (
-                  <div 
-                    key={idx} 
-                    onClick={() => {
-                      if (sfc.id === "people") {
-                        setReviewingAirmanId("J. Reyes");
-                      } else {
-                        setActiveTab(sfc.id as TabType);
-                      }
-                      triggerToast(`Navigating to ${sfc.title} surface`);
-                    }}
-                    className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/15 rounded-2xl p-5 shadow-sm space-y-3 cursor-pointer transition"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="size-2 rounded-full bg-[var(--brand-color)]"></span>
-                        <h4 className="text-sm font-black text-slate-800 dark:text-white leading-none">{sfc.title}</h4>
-                      </div>
-                      <ChevronRight className="size-4 text-slate-400" />
-                    </div>
-                    <span className="text-[10px] text-[var(--brand-color)] font-bold block leading-tight font-mono">{sfc.sub}</span>
-                    <p className="text-xs text-slate-500 leading-relaxed font-sans">{sfc.body}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Timeline and k>=5 Notes split layout */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                
-                {/* Timeline agenda */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                  <div>
-                    <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono">Today &middot; 28 Jul</span>
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Agenda Timeline</h3>
-                  </div>
-
-                  <div className="relative border-l border-slate-100 dark:border-white/5 pl-6 ml-2 space-y-6 text-xs font-sans">
-                    
-                    {/* Item 1 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">06:42</span>
-                      <span className="font-bold text-slate-800 dark:text-white block mt-0.5">OFT clearance run</span>
-                      <span className="text-[10px] text-emerald-500 block leading-tight font-mono">3 cleared</span>
-                    </div>
-
-                    {/* Item 2 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">07:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">PT session &middot; Alpha flight</span>
-                    </div>
-
-                    {/* Item 3 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-slate-300 dark:bg-slate-700 border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">11:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">Rehab review &middot; J. Reyes</span>
-                    </div>
-
-                    {/* Item 4 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-slate-300 dark:bg-slate-700 border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">14:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">Plan sync with PT/IM</span>
-                    </div>
-
-                  </div>
-                </div>
-
-                {/* k>=5 Guidelines notes */}
-                <div className="lg:col-span-4 bg-[#f8fafc] dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 text-left text-xs space-y-3 font-sans flex flex-col justify-between">
-                  <div>
-                    <span className="font-bold text-slate-800 dark:text-white block uppercase tracking-wider text-[9px] font-mono">K&ge;5 Notes</span>
-                    <p className="text-slate-500 leading-relaxed font-normal mt-2">
-                      Cohort views with k &ge; 5 airmen: 14-day flight readiness, role-color SCS green. Below k = 1, individual values only.
-                    </p>
-                  </div>
-                  <div className="text-[9px] text-slate-500 select-none font-mono">
-                    Ascend &middot; SCS Workspace prototype
-                  </div>
-                </div>
-
-              </div>
-
-            </div>
-          )}
-
-          {/* Tab 2: DASHBOARD VIEW */}
-          {activeTab === "dashboard" && !reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Header Section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                <div className="text-left">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider uppercase font-mono">SCS · Input</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">Today's queue</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 font-sans">
-                    Showing 7 of 11 &mdash; 7 require attention today &middot; k&ge;5 on cohort trend &middot; Tuesday 28 Jul.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-[9px] font-bold uppercase tracking-wider font-mono">
-                    Population: {POPULATION_LEVELS.CASELOAD}
-                  </span>
-                  <div className="inline-flex rounded-lg border border-slate-200 dark:border-white/5 p-1 bg-white dark:bg-slate-900 text-[10px] font-bold font-mono">
-                    {["Today", "Week", "Month"].map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => { setDashboardDateRange(opt); triggerToast(`Filtering dashboard queue by: ${opt}`); }}
-                        className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                          opt === dashboardDateRange
-                            ? "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white font-bold"
-                            : "text-slate-400 hover:text-slate-700"
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => { setActiveTab("plans"); setShowAssignPlanModal(true); }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    + New plan
-                  </button>
-                </div>
-              </div>
-
-              {/* 4 Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {[
-                  { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
-                  { name: "Needs review", count: "14", desc: "+3 since Mon", col: "orange" },
-                  { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
-                  { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
-                ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.col === "green" ? "text-emerald-500" :
-                        card.col === "orange" ? "text-amber-500" :
-                        card.col === "teal" ? "text-[var(--brand-color)]" : "text-slate-500"
-                      }`}>
-                        {card.desc.split(" since ")[0].split(" this ")[0].split(" cleared ")[0].split(" awaiting ")[0]}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Flagged airmen warning banner */}
-              <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-2xl p-4 text-left flex items-start gap-3 text-xs font-sans">
-                <AlertTriangle className="size-4.5 text-rose-500 flex-shrink-0 mt-0.5" />
-                <div className="space-y-0.5">
-                  <h4 className="font-extrabold text-rose-600">2 airmen flagged L4+ &mdash; review before 11:00</h4>
-                  <p className="text-[11px] text-rose-500 font-medium leading-relaxed font-sans">
-                    J. Reyes (Rehab Block 2), T. Cho (OFT), D. Mendez (Sleep), B. Ndiaye (Mobility). Confidence: High across all views.
-                  </p>
-                </div>
-              </div>
-
-              {/* Main splits layout */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                
-                {/* Left Column (8/12): Queue roster table & Driver Breakdown */}
-                <div className="lg:col-span-8 space-y-6">
-                  
-                  {/* Queue table card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
-                      <div>
-                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                        <p className="text-[10px] text-slate-500 font-mono">Sorted by severity then confidence</p>
-                      </div>
-
-                      <div className="flex gap-2">
-                        {["Needs review", "OFT", "Reconditioning", "L4+"].map((fPill, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => { setDashboardQueueFilter(fPill); triggerToast(`Filtering queue by: ${fPill}`); }}
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                              fPill === dashboardQueueFilter
-                                ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]"
-                                : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-900"
-                            }`}
-                          >
-                            {fPill}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
+                  <Card>
+                    <CardHeader title="Operator Queue" subtitle="Exactly what `/dashboard/scs` returns for operators in scope." />
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            <th className="pb-3">Airman</th>
-                            <th className="pb-3">Driver</th>
-                            <th className="pb-3 text-right">Last Ops</th>
-                            <th className="pb-3">Confidence</th>
-                            <th className="pb-3 text-right">Action</th>
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="text-slate-400">
+                          <tr>
+                            <th className="pb-3 font-semibold">Operator</th>
+                            <th className="pb-3 font-semibold">Assignment</th>
+                            <th className="pb-3 font-semibold">Status</th>
+                            <th className="pb-3 font-semibold">Flight / Unit</th>
+                            <th className="pb-3 font-semibold">Action</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                          {[
-                            { code: "J. Reyes", details: "SrA", dr: "L4 · Pain - lower back", drCol: "red", ops: "54 \u25bc 8", opsCol: "red", conf: "High", plan: "Rehab Block 2", date: "28 Jul" },
-                            { code: "A. Mendez", details: "A1C", dr: "Sleep · 5 nights", drCol: "badge-orange", ops: "62 \u25bc 3", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                            { code: "T. Cho", details: "SSgt", dr: "OFT · clearance", drCol: "badge-teal", ops: "68 \u25b2 2", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                            { code: "B. Ndiaye", details: "A1C", dr: "Mobility", drCol: "badge-teal", ops: "71 \u25b2 4", opsCol: "green", conf: "High", plan: "Reconditioning", date: "26 Jul" },
-                            { code: "K. Patel", details: "A1C", dr: "Load mgmt", drCol: "badge-orange", ops: "66 \u2014 0", opsCol: "slate", conf: "High", plan: "OFT Tempo Prep", date: "28 Jul" },
-                            { code: "M. Hayes", details: "SrA", dr: "Cycle 4", drCol: "badge-teal", ops: "74 \u25b2 1", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                            { code: "D. Okafor", details: "SSgt", dr: "L3 · hip", drCol: "orange", ops: "58 \u25bc 5", opsCol: "red", conf: "Medium", plan: "Hip Recond.", date: "25 Jul" }
-                          ].filter((row) => matchesQueuePill(dashboardQueueFilter, row) && (dashboardDateRange !== "Today" || row.date === "28 Jul")).map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/20 transition">
-                              <td className="py-2.5">
-                                <span className="font-bold text-slate-800 dark:text-white block">{row.code}</span>
-                                <span className="text-[10px] text-slate-500 block mt-0.5">{row.details}</span>
-                              </td>
-                              <td className="py-2.5">
-                                {row.drCol === "red" && <span className="font-bold text-rose-500">{row.dr}</span>}
-                                {row.drCol === "orange" && <span className="font-bold text-amber-500">{row.dr}</span>}
-                                {row.drCol.startsWith("badge-") && (
-                                  <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                    row.drCol === "badge-teal" ? "bg-cyan-500/10 text-cyan-600" : "bg-amber-500/10 text-amber-600"
-                                  }`}>
-                                    {row.dr}
-                                  </span>
-                                )}
-                              </td>
-                              <td className={`py-2.5 text-right font-mono font-bold ${
-                                row.opsCol === "red" ? "text-rose-500" :
-                                row.opsCol === "green" ? "text-emerald-500" : "text-slate-500"
-                              }`}>{row.ops}</td>
-                              <td className="py-2.5">
-                                <span className="inline-flex items-center gap-1.5 font-bold">
-                                  <span className={`size-1.5 rounded-full ${
-                                    row.conf === "High" ? "bg-emerald-500" : "bg-amber-500"
-                                  }`}></span>
-                                  {row.conf}
-                                </span>
-                              </td>
-                              <td className="py-2.5 text-right">
-                                <button
-                                  onClick={() => { setReviewingAirmanId(row.code); triggerToast(`Opened chart view context: ${row.code}`); }}
-                                  className="px-3 py-1 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                                >
-                                  Open
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[10px] font-mono">
-                      <span className="text-slate-400">Showing 7 of 14 airmen</span>
-                      <button type="button" onClick={() => setActiveTab("people")} className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline">
-                        View all &rarr;
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Driver breakdown widget */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Driver Breakdown</h3>
-                      <p className="text-[9px] text-slate-500 font-mono">Cohort &middot; last 7 days</p>
-                    </div>
-
-                    <div className="space-y-4 font-sans text-xs">
-                      {[
-                        { label: "Physical", val: 72, col: "bg-cyan-500" },
-                        { label: "Sleep", val: 59, col: "bg-cyan-500" },
-                        { label: "Mental (training implication)", val: 65, col: "bg-blue-500" },
-                        { label: "Nutritional", val: 71, col: "bg-amber-500" },
-                        { label: "Spiritual", val: 70, col: "bg-yellow-500" }
-                      ].map((bar, idx) => (
-                        <div key={idx} className="space-y-1.5">
-                          <div className="flex justify-between items-baseline font-mono text-[10px]">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{bar.label}</span>
-                            <span>{bar.val}</span>
-                          </div>
-                          <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${bar.col}`} style={{ width: `${bar.val}%` }}></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* Right Column (4/12): Trend curve chart, Recommendations, and PT agenda */}
-                <div className="lg:col-span-4 space-y-6">
-                  
-                  {/* Line Chart card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4 text-left">
-                    <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                      <div>
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">Flight readiness &middot; 14 days</h3>
-                        <p className="text-[9px] text-slate-500">Cohort: S-3 &middot; Tue 15 Jul &ndash; Mon 28 Jul</p>
-                      </div>
-                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase tracking-wider font-mono">
-                        k&ge;5
-                      </span>
-                    </div>
-
-                    <div className="space-y-1">
-                      <h2 className="text-3xl font-black text-slate-800 dark:text-white font-mono leading-none">77</h2>
-                      <span className="text-[10px] text-emerald-500 block leading-tight font-medium">
-                        today &middot; +1.2 vs start
-                      </span>
-                    </div>
-
-                    {/* SVG Line Graph */}
-                    <div className="h-32 w-full pt-2">
-                      <svg viewBox="0 0 200 100" className="w-full h-full" preserveAspectRatio="none">
-                        {/* Grid lines */}
-                        <line x1="0" y1="20" x2="200" y2="20" stroke="currentColor" className="text-slate-100 dark:text-slate-400" strokeWidth="0.5" />
-                        <line x1="0" y1="50" x2="200" y2="50" stroke="currentColor" className="text-slate-100 dark:text-slate-400" strokeWidth="0.5" />
-                        <line x1="0" y1="80" x2="200" y2="80" stroke="currentColor" className="text-slate-100 dark:text-slate-400" strokeWidth="0.5" />
-
-                        {/* Trend path */}
-                        <path 
-                          d="M 0,85 C 20,80 30,70 50,60 C 70,50 80,55 100,45 C 120,35 130,42 150,30 C 170,18 180,22 200,10" 
-                          fill="none" 
-                          stroke="var(--brand-color)" 
-                          strokeWidth="2.5" 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round"
-                        />
-                        {/* Dots markers */}
-                        <circle cx="100" cy="45" r="3" fill="var(--brand-color)" />
-                        <circle cx="200" cy="10" r="3.5" fill="var(--brand-color)" />
-                      </svg>
-                    </div>
-
-                    <div className="flex justify-between items-center text-[9px] font-bold text-slate-500 border-t border-slate-55 dark:border-white/5 pt-2 select-none">
-                      <span className="flex items-center gap-1"><span className="size-1.5 rounded-full bg-emerald-500"></span> Flight readiness</span>
-                      <span className="flex items-center gap-1"><span className="size-1.5 rounded-full bg-blue-500"></span> Physical</span>
-                      <span className="flex items-center gap-1"><span className="size-1.5 rounded-full bg-cyan-500"></span> Sleep</span>
-                    </div>
-                  </div>
-
-                  {/* Recommendations */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                      <div>
-                        <h3 className="text-xs font-bold text-slate-900 dark:text-white">Recommendations</h3>
-                        <p className="text-[9px] text-slate-500">3 actions &middot; 1 due before 11:00</p>
-                      </div>
-                      <span className="px-2 py-0.5 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase tracking-wider font-mono">
-                        3 due
-                      </span>
-                    </div>
-
-                    <div className="space-y-3 font-sans text-xs">
-                      {[
-                        { title: "L4 Reyes - reduce load", body: "Sub-60% 1RM lifts; daily mobility reset. Coordinated with PT/IM.", col: "red" },
-                        { title: "OFT T. Cho - clear for high-tempo lane", body: "Open 4-week 2-block OFT prep roster · sign-off with flight lead.", col: "teal" },
-                        { title: "Sleep A. Mendez - 8 nights monitor", body: "Lights-out 22:30 for 8 nights. Monitor findings log.", col: "orange" }
-                      ].map((rec, i) => (
-                        <div key={i} className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl space-y-1">
-                          <h4 className={`text-[11px] font-extrabold inline-flex items-center gap-1.5 ${
-                            rec.col === "red" ? "text-rose-500" :
-                            rec.col === "teal" ? "text-cyan-500" : "text-amber-500"
-                          }`}>
-                            {rec.title}
-                          </h4>
-                          <p className="text-[10px] text-slate-500 leading-normal font-sans font-medium">{rec.body}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Today's PT line-up */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Today's PT line-up</h3>
-                      <p className="text-[9px] text-slate-500">5 sessions &middot; 28 Jul</p>
-                    </div>
-
-                    <div className="overflow-x-auto text-[10px] text-left">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="border-b border-slate-100 dark:border-white/5 text-[8px] font-bold uppercase tracking-wider text-slate-400 font-sans">
-                            <th className="pb-2">Time</th>
-                            <th className="pb-2">Group</th>
-                            <th className="pb-2">Focus</th>
-                            <th className="pb-2 text-right">Lead</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-55 dark:divide-white/5 font-sans">
-                          {[
-                            { time: "07:00", grp: "Alpha - 12", fcs: "Strength", lead: "TSgt Lee" },
-                            { time: "09:00", grp: "Bravo - 16", fcs: "Endurance", lead: "SSgt Park" },
-                            { time: "11:00", grp: "Rehab - 4", fcs: "Reconditioning", lead: "TSgt Lee" },
-                            { time: "14:00", grp: "OFT prep - 5", fcs: "Tempo", lead: "SSgt Park" },
-                            { time: "16:00", grp: "Mobility - 8", fcs: "Recovery", lead: "TSgt Lee" }
-                          ].map((lineRow, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/20 transition">
-                              <td className="py-2 font-mono text-slate-500 font-bold">{lineRow.time}</td>
-                              <td className="py-2 text-slate-800 dark:text-white font-bold">{lineRow.grp}</td>
-                              <td className="py-2 text-slate-500 font-medium">{lineRow.fcs}</td>
-                              <td className="py-2 text-right text-slate-500">{lineRow.lead}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* OFT clearance status table takes up full width */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div>
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">OFT clearance status</h3>
-                  <p className="text-[9px] text-slate-500">Test date · score/exemption · Pass/Fail · status · next due · linked plan</p>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">Airman</th>
-                        <th className="pb-3">Test Date</th>
-                        <th className="pb-3">Status</th>
-                        <th className="pb-3 text-right">Score</th>
-                        <th className="pb-3">Next Due</th>
-                        <th className="pb-3 text-right">Linked Plan</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { name: "T. Cho", date: "28 Jul", stat: "C - Pass", code: "green-dot", score: "92", due: "15 Jan", plan: "Cycle 4 Perf." },
-                        { name: "K. Patel", date: "20 Jul", stat: "C - Pass", code: "green-dot", score: "88", due: "20 Oct", plan: "OFT Tempo Prep" },
-                        { name: "M. Hayes", date: "25 Jul", stat: "C - Pass", code: "green-dot", score: "90", due: "25 Jan", plan: "Cycle 4 Perf." },
-                        { name: "B. Ndiaye", date: "18 Jul", stat: "NC - Recond.", code: "badge-orange", score: "71", due: "22 Jul", plan: "Reconditioning" },
-                        { name: "D. Okafor", date: "12 Jul", stat: "NC - Recond.", code: "badge-orange", score: "68", due: "19 Jul", plan: "Hip Recond." },
-                        { name: "R. Singh", date: "20 Jul", stat: "Exempt · profile", code: "badge-slate", score: "\u2014", due: "20 Oct", plan: "Mobility Reset" },
-                        { name: "S. Bauer", date: "25 Jul", stat: "Exempt · profile", code: "badge-slate", score: "\u2014", due: "25 Oct", plan: "Sleep Reset" }
-                      ].map((clRow, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-2.5 font-bold text-slate-800 dark:text-white">{clRow.name}</td>
-                          <td className="py-2.5 font-mono text-slate-500">{clRow.date}</td>
-                          <td className="py-2.5">
-                            {clRow.code === "green-dot" ? (
-                              <span className="inline-flex items-center gap-1.5 font-bold text-emerald-500">
-                                <span className="size-1.5 rounded-full bg-emerald-500"></span>
-                                {clRow.stat}
-                              </span>
-                            ) : (
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                clRow.code === "badge-orange" ? "bg-amber-500/10 text-amber-600" : "bg-slate-100 dark:bg-slate-900 text-slate-400"
-                              }`}>
-                                {clRow.stat}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2.5 text-right font-mono text-slate-600">{clRow.score}</td>
-                          <td className="py-2.5 font-mono text-slate-500">{clRow.due}</td>
-                          <td className="py-2.5 text-right text-slate-700 dark:text-slate-300">{clRow.plan}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="pt-2 flex justify-between items-center text-[9px] font-mono text-slate-400">
-                  <span>Exemption reason recordable audit log &middot; Score entry via OFT lead</span>
-                  <button type="button" onClick={() => setActiveTab("coverage")} className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline">Coverage &rarr;</button>
-                </div>
-              </div>
-
-              {/* Hours coverage and RTP splits */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
-                
-                {/* Hours coverage stats */}
-                <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <p className="text-[9px] text-slate-500 font-mono">Scheduled + worked &middot; progress toward 2,080 annual</p>
-                    </div>
-                    <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
-                      95% target
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 text-left">
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">160</span>
-                      <span className="text-[9px] text-slate-500 block">Cap 200</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">152</span>
-                      <span className="text-[9px] text-emerald-500 block">95% of scheduled</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block font-mono">1,128 / 2,080</span>
-                      <span className="text-[9px] text-slate-500 block">54% on pace</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
-                      <span className="font-bold text-rose-500 block">8</span>
-                      <span className="text-[9px] text-slate-500 block">2 due to leave</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[9px] font-mono">
-                    <span className="text-slate-500">RSD coverage (separate)</span>
-                    <span className="font-bold text-amber-500 font-sans">36 / 20</span>
-                  </div>
-                  <p className="text-[9px] text-slate-500 leading-relaxed font-sans mt-1">
-                    Restricted-status duty sessions &mdash; tracked separate from regular SCS hours.
-                  </p>
-                </div>
-
-                {/* RTP + RTD guide guidelines */}
-                <div className="bg-[#f8fafc] dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 text-left text-xs space-y-3 font-sans">
-                  <span className="font-bold text-slate-800 dark:text-white block uppercase tracking-wider text-[9px] font-mono">RTP + RTD &mdash; they are not the same</span>
-                  <div className="space-y-2">
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-[var(--brand-color)] block">RTP (Return to Performance)</span>
-                      <p className="text-slate-600 leading-normal font-normal font-sans">
-                        is managed in Ascend: SCS + PT/IM coordinate reconditioning, training load, and progression.
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-amber-600 block">RTD (Return to Duty)</span>
-                      <p className="text-slate-600 leading-normal font-normal font-sans">
-                        requires source-authority + decision date + verification + reevaluation/expiration. RTD is only surfaced when all four fields are present.
-                      </p>
-                      <p className="text-[10px] text-slate-400 font-sans italic leading-normal">
-                        SCS does not edit restriction profiles, adjust temporary clinical clearings, or edit RTD thresholds. We plan re-load.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Workout log last 14 days table */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Recent workouts &middot; 7 events</h3>
-                    <p className="text-[9px] text-slate-500 font-mono">Status · date · type · duration · RPE · linked plan · applied limitation · review</p>
-                  </div>
-                  <button type="button" onClick={() => setViewingAllWorkouts(true)} className="text-[10px] text-[var(--brand-color)] font-bold cursor-pointer hover:underline font-mono">
-                    All workouts &rarr;
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Status</th>
-                        <th className="pb-3">Date</th>
-                        <th className="pb-3">Type</th>
-                        <th className="pb-3 text-right">Duration</th>
-                        <th className="pb-3 text-right">RPE</th>
-                        <th className="pb-3">Linked Plan</th>
-                        <th className="pb-3 w-1/4">Applied Limitation</th>
-                        <th className="pb-3 text-right">Review</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {WORKOUT_LOG.map((workRow, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-2.5">
-                            <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                              workRow.col === "green" ? "bg-emerald-500/10 text-emerald-500" :
-                              workRow.col === "orange" ? "bg-amber-500/10 text-amber-500" : "bg-sky-500/10 text-sky-500"
-                            }`}>
-                              {workRow.status}
-                            </span>
-                          </td>
-                          <td className="py-2.5 font-mono text-slate-500">{workRow.date}</td>
-                          <td className="py-2.5 font-bold text-slate-700 dark:text-slate-300">{workRow.type}</td>
-                          <td className="py-2.5 text-right font-mono text-slate-500">{workRow.dur}</td>
-                          <td className="py-2.5 text-right font-mono text-slate-500">{workRow.rpe}</td>
-                          <td className="py-2.5 text-slate-700 dark:text-slate-300">{workRow.plan}</td>
-                          <td className="py-2.5 text-slate-500 leading-normal">{workRow.lim}</td>
-                          <td className="py-2.5 text-right text-slate-500 font-medium">{workRow.rev}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* View Authorized performance summary block */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left flex flex-col md:flex-row md:items-center justify-between gap-4 font-sans text-xs">
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-slate-800 dark:text-white flex items-center gap-1.5">
-                    View Authorized Performance Summary
-                    <span className="px-2 py-0.2 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded">
-                      Summary: Authorized access
-                    </span>
-                    <span className="px-2 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[8px] font-bold rounded">
-                      Raw record: {PRIVACY_STATES.RESTRICTED}
-                    </span>
-                  </h4>
-                  <p className="text-slate-600 leading-normal font-sans">
-                    PT/IM approved &middot; versioned &middot; minimum-necessary &middot; named audiences.
-                  </p>
-                  <p className="text-[10px] text-slate-500 font-mono">
-                    Open the read-only Performance Summary for any airman on an active plan. Medical records remain in PT/IM control &mdash; SCS never opens raw medical files.
-                  </p>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={() => { setReviewingAirmanId("J. Reyes"); triggerToast("Displaying J. Reyes Performance summary record"); }} className="px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl font-bold transition">
-                    View J. Reyes Summary
-                  </button>
-                  <button onClick={() => setViewingPlanRefs(true)} className="px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-slate-700 dark:text-slate-300 font-bold transition hover:bg-slate-50">
-                    Plan references
-                  </button>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="text-[10px] text-slate-400 select-none font-mono text-left pt-2">
-                Ascend &middot; SCS Workspace prototype
-              </div>
-
-            </div>
-          )}
-
-          {/* Tab 3: PEOPLE ROSTER VIEW */}
-          {activeTab === "people" && !reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Header Section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                <div className="text-left">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">SCS - PEOPLE</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">People</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                    112 airmen &middot; {POPULATION_LEVELS.CASELOAD}. Sorted by severity then confidence. Opening a row is a {POPULATION_LEVELS.INDIVIDUAL} (k=1) drill-in and is audit logged.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-[9px] font-bold uppercase tracking-wider font-mono">
-                    Population: {POPULATION_LEVELS.CASELOAD}
-                  </span>
-                  <button
-                    onClick={() => setActiveTab("coverage")}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-white hover:bg-slate-55 dark:hover:bg-slate-800 transition cursor-pointer"
-                  >
-                    Coverage
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("plans")}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    Assign plan
-                  </button>
-                </div>
-              </div>
-
-              {/* 4 Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {[
-                  { name: "Active airmen", count: "112", desc: "+4 this month", icon: "green" },
-                  { name: "Needs review", count: "14", desc: "+3 since Mon", icon: "orange" },
-                  { name: "L4+ flagged", count: "3", desc: "Review before 11:00", icon: "red" },
-                  { name: "Reconditioning", count: "5", desc: "2 awaiting review", icon: "slate" }
-                ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.icon === "green" ? "text-emerald-500" :
-                        card.icon === "orange" ? "text-amber-500" :
-                        card.icon === "red" ? "text-rose-500" : "text-[var(--brand-color)]"
-                      }`}>
-                        {card.desc.split(" since ")[0].split(" this ")[0].split(" before ")[0].split(" awaiting ")[0]}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* People Table */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                    <p className="text-[10px] text-slate-500">Sorted by severity then confidence</p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    {["Needs review", "OFT", "Reconditioning", "L4+", "All 112"].map((fPill, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => { setPeopleQueueFilter(fPill); triggerToast(`Filtering roster by: ${fPill}`); }}
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                          fPill === peopleQueueFilter
-                            ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-900"
-                        }`}
-                      >
-                        {fPill}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">Airman</th>
-                        <th className="pb-3">Driver</th>
-                        <th className="pb-3 text-right">Last Ops</th>
-                        <th className="pb-3">Confidence</th>
-                        <th className="pb-3">Plan</th>
-                        <th className="pb-3">Last Contact</th>
-                        <th className="pb-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { code: "J. Reyes", details: "SrA · Alpha", dr: "L4 · Pain - lower back", drCol: "red", ops: "54 \u25bc 8", opsCol: "red", conf: "High", plan: "Rehab Block 2", date: "28 Jul" },
-                        { code: "A. Mendez", details: "A1C · Bravo", dr: "Sleep · 5 nights", drCol: "badge-orange", ops: "62 \u25bc 3", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                        { code: "T. Cho", details: "SSgt · Alpha", dr: "OFT · clearance", drCol: "badge-teal", ops: "68 \u25b2 2", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                        { code: "B. Ndiaye", details: "A1C · Charlie", dr: "Mobility", drCol: "badge-teal", ops: "71 \u25b2 4", opsCol: "green", conf: "High", plan: "Reconditioning", date: "26 Jul" },
-                        { code: "K. Patel", details: "A1C · Bravo", dr: "Load mgmt", drCol: "badge-orange", ops: "66 \u2014 0", opsCol: "slate", conf: "High", plan: "OFT Tempo Prep", date: "28 Jul" },
-                        { code: "M. Hayes", details: "SrA · Alpha", dr: "Cycle 4", drCol: "badge-teal", ops: "74 \u25b2 1", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                        { code: "D. Okafor", details: "SSgt · Charlie", dr: "L3 · hip", drCol: "orange", ops: "58 \u25bc 5", opsCol: "red", conf: "Medium", plan: "Hip Recond.", date: "25 Jul" },
-                        { code: "R. Singh", details: "SrA · Bravo", dr: "Profile · exempt", drCol: "badge-slate", ops: "70 \u2014 1", opsCol: "slate", conf: "Medium", plan: "Mobility Reset", date: "24 Jul" },
-                        { code: "S. Bauer", details: "A1C · Alpha", dr: "Sleep · 3 nights", drCol: "badge-orange", ops: "64 \u25bc 2", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                        { code: "L. Soto", details: "SSgt · Charlie", dr: "L2 · shoulder", drCol: "orange", ops: "69 \u25b2 3", opsCol: "green", conf: "High", plan: "Upper Recond.", date: "26 Jul" }
-                      ].filter((row) => matchesQueuePill(peopleQueueFilter, row)).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-3">
-                            <span className="font-bold text-slate-800 dark:text-white block">{row.code}</span>
-                            <span className="text-[10px] text-slate-500 font-medium block mt-0.5">{row.details}</span>
-                          </td>
-                          <td className="py-3">
-                            {row.drCol === "red" && <span className="font-bold text-rose-500">{row.dr}</span>}
-                            {row.drCol === "orange" && <span className="font-bold text-amber-500">{row.dr}</span>}
-                            {row.drCol.startsWith("badge-") && (
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                row.drCol === "badge-teal" ? "bg-cyan-500/10 text-cyan-600" :
-                                row.drCol === "badge-orange" ? "bg-amber-500/10 text-amber-600" : "bg-slate-100 text-slate-500"
-                              }`}>
-                                {row.dr}
-                              </span>
-                            )}
-                          </td>
-                          <td className={`py-3 text-right font-mono font-bold ${
-                            row.opsCol === "red" ? "text-rose-500" :
-                            row.opsCol === "green" ? "text-emerald-500" : "text-slate-500"
-                          }`}>{row.ops}</td>
-                          <td className="py-3">
-                            <span className="inline-flex items-center gap-1.5 font-bold">
-                              <span className={`size-1.5 rounded-full ${
-                                row.conf === "High" ? "bg-emerald-500" : "bg-amber-500"
-                              }`}></span>
-                              {row.conf}
-                            </span>
-                          </td>
-                          <td className="py-3 text-slate-700 dark:text-slate-300">{row.plan}</td>
-                          <td className="py-3 text-slate-500 font-mono">{row.date}</td>
-                          <td className="py-3 text-right">
-                            <button
-                              onClick={() => {
-                                setReviewingAirmanId(row.code);
-                                triggerToast(`Opening roster file context for ${row.code}`);
-                              }}
-                              className="px-3.5 py-1.5 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                            >
-                              Open
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination */}
-                <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-white/5">
-                  <span className="text-[10px] text-slate-500 font-mono">1&mdash;10 of 14</span>
-                  <div className="flex items-center gap-1">
-                    <button aria-label="Previous page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-400 rounded hover:bg-slate-50">&lt;</button>
-                    <button aria-label="Page 1" aria-current="page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/10 text-[10px] text-[var(--brand-color)] font-bold rounded bg-[var(--brand-color)]/10">1</button>
-                    <button aria-label="Page 2" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 rounded hover:bg-slate-50">2</button>
-                    <button aria-label="Next page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 rounded hover:bg-slate-50">&gt;</button>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Footer */}
-              <div className="pt-2 flex justify-between items-center text-[10px] font-mono text-slate-400">
-                <span>14 flagged of 112 assigned &middot; k=1 drill-in is audit logged</span>
-                <button type="button" className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline" onClick={() => setActiveTab("coverage")}>Coverage &rarr;</button>
-              </div>
-
-            </div>
-          )}
-
-          {/* Tab 4: PLANS LIST AND ASSIGNMENTS */}
-          {activeTab === "plans" && !reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Header Section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                <div className="text-left">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">SCS - PLANS</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">Plan assignment</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                    Browse templates, assign to airmen, push to the flight queue. Plans sync with PT/IM and Plan role.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-[9px] font-bold uppercase tracking-wider font-mono">
-                    Population: {POPULATION_LEVELS.CASELOAD}
-                  </span>
-                  <div className="inline-flex rounded-lg border border-slate-200 dark:border-white/5 p-1 bg-white dark:bg-slate-900 text-[10px] font-bold font-mono">
-                    {["Templates", "Active", "History"].map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => { setPlansView(opt); triggerToast(`Filtering plans by: ${opt}`); }}
-                        className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                          opt === plansView
-                            ? "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white font-bold"
-                            : "text-slate-400 hover:text-slate-700"
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => setShowRecondPlanModal(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    + New plan
-                  </button>
-                </div>
-              </div>
-
-              {/* 6 Plan Template Cards Grid */}
-              {plansView === "Templates" && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs text-left font-sans">
-                {[
-                  { title: "4-week reconditioning", badge: `Reconditioning · ${PLAN_STATUSES.ACTIVE}`, star: true, desc: "Lower back, post-OFT mobility focus · 12 sessions", details: "BLOCK 1 - WEEKS 1-2: Daily mobility reset - 12 min · Sub-60% 1RM deadlift x 3 · Mobility 3 x 4 sets · Loaded carry progression. BLOCK 2 - WEEKS 3-4: Tempo runs x 4 · Box squat progression · Mobility work - 8 min.", cad: "3x/wk · 45 min", win: "28 days · 3 blocks", owner: "SCS + PT/IM · Sign-off: Capt Shah" },
-                  { title: "Cycle 4 performance", badge: "Performance · Active", star: false, desc: "Strength + endurance · 16 sessions", details: "3+5 back squat progression · 4x8 bench press · Tempo intervals: 4x 5 min · Mobility cooldown: 8 min.", cad: "4x/wk · 60 min", win: "28 days · 4 blocks", owner: "SCS · Plan design" },
-                  { title: "Sleep reset - 7 day", badge: "Recovery · Draft", star: false, desc: "Anchor sleep + evening cell phone cutoff", details: "Lights-out anchor - 22:30 · Caffeine cutoff - 14:00 · Dim-evening - 21:00 · Morning light - 10 min.", cad: "Daily · ~10 min", win: "7 days · 1 block", owner: "SCS · Self-reported" },
-                  { title: "Mobility reset - 12 min", badge: "Mobility · Active", star: false, desc: "Hip, T-spine, ankle · daily routine", details: "90/90 hip - 4 min · T-spine rotations - 3 min · Calf stretches - 35 s/side · Ankle/dorsi - 90 s/side.", cad: "Daily · 12 min", win: "14 days · Daily", owner: "SCS · Self-reported" },
-                  { title: "OFT tempo prep", badge: "OFT prep · Active", star: false, desc: "High-intensity prep · 8 sessions", details: "400m repeats: 6x · Performance pace x 6 · Box jump complex · Sled push: 4x 30m.", cad: "2x/wk · 75 min", win: "28 days · Lane signoff", owner: "SCS + OFT lead · Lane signoff" },
-                  { title: "PT/IM handoff packet", badge: "Handoff · Draft", star: false, desc: "Scoped medical record for PT/IM and IDMT recipients", details: "OFT clearance + reviews · Clearance status · Open session compliance · Coordination notes.", cad: "Per visit · Scoped", win: "14 days · IDMT share", owner: "SCS + PT/IM · IDMT share" }
-                ].map((tpl, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 text-[8px] font-bold rounded-full uppercase tracking-wider">
-                          {tpl.badge}
-                        </span>
-                        {tpl.star && <span className="text-amber-500 font-bold font-mono select-none">&#9733;</span>}
-                      </div>
-
-                      <h4 className="text-sm font-black text-slate-800 dark:text-white leading-tight">{tpl.title}</h4>
-                      <p className="text-slate-500 font-medium leading-relaxed">{tpl.desc}</p>
-                      
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 dark:border-white/5 text-[10px]">
-                        <div>
-                          <span className="text-[8px] text-slate-400 block uppercase font-mono">Cadence</span>
-                          <span className="font-bold text-slate-700 dark:text-slate-300">{tpl.cad}</span>
-                        </div>
-                        <div>
-                          <span className="text-[8px] text-slate-400 block uppercase font-mono">Window</span>
-                          <span className="font-bold text-slate-700 dark:text-slate-300">{tpl.win}</span>
-                        </div>
-                        <div>
-                          <span className="text-[8px] text-slate-400 block uppercase font-mono">Owner</span>
-                          <span className="font-bold text-[var(--brand-color)] truncate block">{tpl.owner.split(" · ")[0]}</span>
-                        </div>
-                      </div>
-
-                      <p className="text-[10px] text-slate-500 font-mono leading-normal pt-2 border-t border-slate-55 dark:border-white/5 truncate max-w-xs">{tpl.details}</p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-white/5">
-                      <button
-                        onClick={() => {
-                          // Pre-fill the assign-plan form with the template's title and open the assign modal
-                          setAssignPlan(tpl.title);
-                          setShowAssignPlanModal(true);
-                          triggerToast(`Selected plan template: ${tpl.title}`);
-                        }}
-                        className="py-1.5 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white text-[10px] font-bold rounded-lg transition cursor-pointer"
-                      >
-                        Use template
-                      </button>
-                      <button
-                        onClick={() => setViewingTemplate(tpl)}
-                        className="py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 text-[10px] font-bold rounded-lg text-slate-700 dark:text-slate-300 transition"
-                      >
-                        Preview
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              )}
-
-              {/* Active Plan Assignments */}
-              {plansView === "Active" && (
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Active Assignments</h3>
-                    <p className="text-[10px] text-slate-500">8 active &middot; 2 awaiting sign-off</p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    {[PLAN_STATUSES.ACTIVE, "Rehab", "Performance", "Reconditioning", PLAN_STATUSES.DRAFT].map((pill, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => { setAssignmentsFilter(pill); triggerToast(`Filtering assignments by: ${pill}`); }}
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                          pill === assignmentsFilter
-                            ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]"
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 text-slate-500 hover:text-slate-900"
-                        }`}
-                      >
-                        {pill}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Status</th>
-                        <th className="pb-3 w-1/3">Plan</th>
-                        <th className="pb-3">Airman</th>
-                        <th className="pb-3">Window</th>
-                        <th className="pb-3">Owner</th>
-                        <th className="pb-3">Compliance</th>
-                        <th className="pb-3">Sign-off</th>
-                        <th className="pb-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { status: PLAN_STATUSES.PENDING_REVIEW, plan: "Rehab Block 2 · Lower back focus", air: "J. Reyes", airUnit: "SrA · Alpha", win: "22 Jul - 8 Aug", owner: "SCS + PT/IM", comp: "71%", col: "orange", sign: "Capt Shah", signBold: true },
-                        { status: PLAN_STATUSES.ACTIVE, plan: "Cycle 4 Performance · Strength", air: "T. Cho", airUnit: "SSgt · Alpha", win: "14 Jul - 10 Aug", owner: "SCS", comp: "88%", col: "green", sign: "SCS lead" },
-                        { status: PLAN_STATUSES.DRAFT, plan: "Sleep Reset · Sleep focus", air: "D. Mendez", airUnit: "SSgt · Alpha", win: "30 Jul - 6 Aug", owner: "SCS", comp: "0%", col: "slate", sign: "\u2014" },
-                        { status: PLAN_STATUSES.PENDING_REVIEW, plan: "Reconditioning · Chest/T-block", air: "B. Ndiaye", airUnit: "A1C · Bravo", win: "1 Aug - 22 Aug", owner: "SCS + PT/IM", comp: "\u2014", col: "orange", sign: "PT/IM lead" },
-                        { status: PLAN_STATUSES.ACTIVE, plan: "OFT Tempo Prep · High intensity", air: "K. Patel", airUnit: "A1C · Charlie", win: "20 Jul - 12 Aug", owner: "SCS + OFT", comp: "52%", col: "green", sign: "OFT Lead" }
-                      ].filter((row) => matchesAssignmentPill(assignmentsFilter, row)).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-2.5">
-                            <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                              row.col === "green" ? "bg-emerald-500/10 text-emerald-500" :
-                              row.col === "orange" ? "bg-amber-500/10 text-amber-500" : "bg-slate-100 dark:bg-slate-900 text-slate-400"
-                            }`}>
-                              {row.status}
-                            </span>
-                          </td>
-                          <td className="py-2.5">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 block">{row.plan.split(" · ")[0]}</span>
-                            <span className="text-[10px] text-slate-500 block mt-0.5">{row.plan.split(" · ")[1]}</span>
-                          </td>
-                          <td className="py-2.5">
-                            <span className="font-bold text-slate-800 dark:text-white block">{row.air}</span>
-                            <span className="text-[10px] text-slate-500 block mt-0.5">{row.airUnit}</span>
-                          </td>
-                          <td className="py-2.5 font-mono text-slate-500">{row.win}</td>
-                          <td className="py-2.5 text-slate-500">{row.owner}</td>
-                          <td className="py-2.5">
-                            <div className="flex items-center gap-2 font-mono text-[10px]">
-                              <span>{row.comp}</span>
-                              {row.comp !== "\u2014" && (
-                                <div className="w-12 h-1 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                                  <div className="h-full bg-[var(--brand-color)]" style={{ width: row.comp }}></div>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className={`py-2.5 ${row.signBold ? "font-bold text-slate-800 dark:text-white" : "text-slate-500"}`}>{row.sign}</td>
-                          <td className="py-2.5 text-right">
-                            <button
-                              onClick={() => setViewingAssignment(row)}
-                              className="px-3 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition cursor-pointer"
-                            >
-                              Edit
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              )}
-
-              {/* Workout log last 14 days table */}
-              {plansView === "History" && (
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div>
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">Workout log &middot; last 14 days</h3>
-                  <p className="text-[9px] text-slate-500 font-mono">Audit logged &middot; SCS daily training + reconditioning only</p>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Status</th>
-                        <th className="pb-3">Date</th>
-                        <th className="pb-3">Type</th>
-                        <th className="pb-3 text-right">Duration</th>
-                        <th className="pb-3 text-right">RPE</th>
-                        <th className="pb-3">Linked Plan</th>
-                        <th className="pb-3 w-1/4">Applied Limitation</th>
-                        <th className="pb-3 text-right">Review</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { status: "Done", date: "28 Jul", type: "Rehab · McGill Big 3", dur: "32 min", rpe: "6", plan: "Rehab Block 2", lim: "Sub-80% 1RM deadlift", rev: "Reviewed", col: "green" },
-                        { status: "Done", date: "27 Jul", type: "Mobility reset", dur: "12 min", rpe: "3", plan: "Rehab Block 2", lim: "\u2014", rev: "Reviewed", col: "green" },
-                        { status: "Modified", date: "25 Jul", type: "Tempo run", dur: "24 min", rpe: "8", plan: "OFT Tempo Prep", lim: "HR cap: 165", rev: "Pending", col: "orange" },
-                        { status: "Skipped", date: "24 Jul", type: "Loaded carry", dur: "\u2014", rpe: "\u2014", plan: "Rehab Block 2", lim: "L4 lower back", rev: REVIEW_STATUS.PENDING, col: "blue" },
-                        { status: "Done", date: "22 Jul", type: "Strength · back squat", dur: "45 min", rpe: "7", plan: "Cycle 4 Perf.", lim: "\u2014", rev: "Reviewed", col: "green" },
-                        { status: "Done", date: "20 Jul", type: "Mobility reset", dur: "12 min", rpe: "2", plan: "Rehab Block 2", lim: "\u2014", rev: "Reviewed", col: "green" },
-                        { status: "Done", date: "18 Jul", type: "Deadlift", dur: "45 min", rpe: "6", plan: "Rehab Block 2", lim: "Sub-80% 1RM", rev: "Reviewed", col: "green" }
-                      ].map((workRow, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-2.5">
-                            <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                              workRow.col === "green" ? "bg-emerald-500/10 text-emerald-500" :
-                              workRow.col === "orange" ? "bg-amber-500/10 text-amber-500" : "bg-sky-500/10 text-sky-500"
-                            }`}>
-                              {workRow.status}
-                            </span>
-                          </td>
-                          <td className="py-2.5 font-mono text-slate-500">{workRow.date}</td>
-                          <td className="py-2.5 font-bold text-slate-700 dark:text-slate-300">{workRow.type}</td>
-                          <td className="py-2.5 text-right font-mono text-slate-500">{workRow.dur}</td>
-                          <td className="py-2.5 text-right font-mono text-slate-500">{workRow.rpe}</td>
-                          <td className="py-2.5 text-slate-700 dark:text-slate-300">{workRow.plan}</td>
-                          <td className="py-2.5 text-slate-500 leading-normal">{workRow.lim}</td>
-                          <td className="py-2.5 text-right text-slate-500 font-medium">{workRow.rev}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              )}
-
-              {/* View Authorized performance summary block */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left flex flex-col md:flex-row md:items-center justify-between gap-4 font-sans text-xs">
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-slate-800 dark:text-white flex items-center gap-1.5">
-                    View Authorized Performance Summary
-                    <span className="px-2 py-0.2 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded">
-                      Summary: Authorized access
-                    </span>
-                    <span className="px-2 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[8px] font-bold rounded">
-                      Raw record: {PRIVACY_STATES.RESTRICTED}
-                    </span>
-                  </h4>
-                  <p className="text-slate-600 leading-normal">
-                    PT/IM approved &middot; versioned &middot; minimum-necessary &middot; time-limited &middot; named audiences.
-                  </p>
-                  <p className="text-[10px] text-slate-500 font-mono">
-                    Open the read-only Performance Summary to view scoping, drivers, and current recommendations. SCS does not open raw medical files.
-                  </p>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={() => setViewingSummary(true)} className="px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl font-bold transition">
-                    View Summary
-                  </button>
-                  <button onClick={() => setViewingAuditLog(true)} className="px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-slate-700 dark:text-slate-300 font-bold transition hover:bg-slate-50">
-                    Audit log
-                  </button>
-                </div>
-              </div>
-
-              {/* Assign Plan Form split queue */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                
-                {/* Form */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Assign to one airman</h3>
-                    <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
-                      Population: {POPULATION_LEVELS.INDIVIDUAL}
-                    </span>
-                  </div>
-
-                  <p className="text-[10px] text-slate-500 leading-relaxed font-sans bg-slate-50 dark:bg-slate-900/60 p-3 rounded-xl">
-                    Single airman scope &middot; SCS assigns one operator at a time. Flight template plan triggers in Plan &middot; Assignment and require sign-off by Plan role + PT/IM where applicable.
-                  </p>
-
-                  <form onSubmit={handleAssignPlanSubmit} className="space-y-4 font-sans text-xs">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label htmlFor="scs-assign-airman" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Airman</label>
-                        <select
-                          id="scs-assign-airman"
-                          value={assignAirman}
-                          onChange={(e) => setAssignAirman(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white"
-                        >
-                          <option value="J. Reyes">J. Reyes (SrA · Alpha flight)</option>
-                          <option value="D. Mendez">D. Mendez (SSgt · Bravo flight)</option>
-                          <option value="T. Cho">T. Cho (A1C · Alpha flight)</option>
-                        </select>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label htmlFor="scs-assign-plan" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Plan template</label>
-                        <select
-                          id="scs-assign-plan"
-                          value={assignPlan}
-                          onChange={(e) => setAssignPlan(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white"
-                        >
-                          <option value="Rehab Block 2">Rehab Block 2</option>
-                          <option value="Cycle 4 performance">Cycle 4 performance</option>
-                          <option value="Sleep reset - 7 day">Sleep reset - 7 day</option>
-                        </select>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label htmlFor="scs-assign-window" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Window</label>
-                        <input
-                          id="scs-assign-window"
-                          type="text"
-                          value={assignWindow}
-                          onChange={(e) => setAssignWindow(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white font-mono"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label htmlFor="scs-assign-coowner" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Co-owner</label>
-                        <input
-                          id="scs-assign-coowner"
-                          type="text"
-                          value={assignCoOwner}
-                          onChange={(e) => setAssignCoOwner(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white font-sans"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 justify-end pt-2 border-t border-slate-100 dark:border-white/5">
-                      <button
-                        type="button"
-                        onClick={handleSaveAssignmentDraft}
-                        className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition cursor-pointer"
-                      >
-                        Save draft
-                      </button>
-                      <button 
-                        type="submit" 
-                        className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl font-bold transition cursor-pointer"
-                      >
-                        Push to airman
-                      </button>
-                    </div>
-                  </form>
-                </div>
-
-                {/* Queue */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Assignment queue</h3>
-                    <p className="text-[9px] text-slate-500">Awaiting PT/IM sign-off &middot; 2</p>
-                  </div>
-
-                  <div className="space-y-3">
-                    {[
-                      { name: "B. Ndiaye", status: PLAN_STATUSES.PENDING_REVIEW, details: "Reconditioning · 1 Aug - 22 Aug · SCS + Plan" },
-                      { name: "D. Okafor", status: PLAN_STATUSES.PENDING_REVIEW, details: "Hip reconditioning · 30 Jul - 27 Aug · SCS + PT/IM" }
-                    ].map((queItem, idx) => (
-                      <div key={idx} className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl space-y-1.5 text-left">
-                        <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-slate-800 dark:text-white">{queItem.name}</span>
-                          <span className="px-1.5 py-0.2 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
-                            {queItem.status}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 leading-normal">{queItem.details}</p>
-                        <button
-                          onClick={() => setViewingQueueItem(queItem)}
-                          className="w-full text-center py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 text-[10px] font-bold text-slate-700 dark:text-slate-300 rounded-lg transition"
-                        >
-                          Review
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <p className="text-[8px] text-slate-400 font-mono leading-normal pt-2 border-t border-slate-100 dark:border-white/5">
-                    PT/IM sync: 14:00 today. Check for reviewing packets, sign-off window 30 min, tracking.
-                  </p>
-                </div>
-
-              </div>
-
-            </div>
-          )}
-
-          {/* Tab 5: WORKLOAD COVERAGE VIEW */}
-          {activeTab === "coverage" && !reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Header Section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                <div className="text-left">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">SCS - COVERAGE</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">Workload coverage</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                    PT session capacity, OFT lane coverage, leave overlap, and SCS availability for the flight.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-[9px] font-bold uppercase tracking-wider font-mono">
-                    Population: {POPULATION_LEVELS.UNIT}
-                  </span>
-                  <div className="inline-flex rounded-lg border border-slate-200 dark:border-white/5 p-1 bg-white dark:bg-slate-900 text-[10px] font-bold font-mono">
-                    {["This week", "Next week", "Month"].map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => { setCoverageWeek(opt); triggerToast(`Displaying coverage for: ${opt}`); }}
-                        className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                          opt === coverageWeek
-                            ? "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white font-bold"
-                            : "text-slate-400 hover:text-slate-700"
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* 4 Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {[
-                  { name: "PT sessions / wk", count: "28", desc: "Cap 32 · 88% used", icon: "green" },
-                  { name: "OFT lanes covered", count: "5/7", desc: "-2 uncovered lanes", icon: "red" },
-                  { name: "Reconditioning load", count: "5", desc: "2 awaiting review", icon: "slate" },
-                  { name: "Leave overlap", count: "1", desc: "27 Jul - 29 Jul", icon: "orange" }
-                ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.icon === "green" ? "text-emerald-500" :
-                        card.icon === "teal" ? "text-[var(--brand-color)]" :
-                        card.icon === "red" ? "text-rose-500" : "text-amber-500"
-                      }`}>
-                        {card.desc.split(" · ")[0]}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Workload by Flight */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Workload by flight</h3>
-                    <p className="text-[10px] text-slate-500">PT sessions, OFT lanes, reconditioning count &middot; week of 27 Jul</p>
-                  </div>
-                  <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase">
-                    k&ge;5
-                  </span>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Flight</th>
-                        <th className="pb-3 text-right">Airmen</th>
-                        <th className="pb-3 text-right">PT / Wk</th>
-                        <th className="pb-3 text-right">OFT Lanes</th>
-                        <th className="pb-3 text-right">Rehab</th>
-                        <th className="pb-3 text-right">Reconditioning</th>
-                        <th className="pb-3 text-right">Capacity</th>
-                        <th className="pb-3 w-1/4 text-right">Load</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { fl: "Alpha", air: "38", pt: "10", oft: "2/3", rehab: "3", cond: "2", cap: "12", pct: "80%", col: "bg-emerald-500" },
-                        { fl: "Bravo", air: "42", pt: "11", oft: "2/3", rehab: "2", cond: "2", cap: "12", pct: "75%", col: "bg-amber-500" },
-                        { fl: "Charlie", air: "32", pt: "7", oft: "1/1", rehab: "1", cond: "1", cap: "8", pct: "60%", col: "bg-emerald-500" },
-                        { fl: "Total", air: "112", pt: "28", oft: "5/7", rehab: "6", cond: "5", cap: "32", pct: "70%", col: "bg-[var(--brand-color)]", bold: true }
-                      ].map((row, idx) => (
-                        <tr key={idx} className={`hover:bg-slate-50/20 transition ${row.bold ? "font-bold text-slate-800 dark:text-white" : ""}`}>
-                          <td className="py-3 font-bold">{row.fl}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.air}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.pt}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.oft}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.rehab}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.cond}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.cap}</td>
-                          <td className="py-3 text-right">
-                            <div className="flex items-center justify-end gap-2 font-mono text-[10px]">
-                              <span>{row.pct}</span>
-                              <div className="w-20 h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${row.col}`} style={{ width: row.pct }}></div>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* SCS Availability Matrix */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-2.5">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">SCS availability &middot; this week</h3>
-                    <p className="text-[10px] text-slate-500">Capacity 0-5 &middot; higher = busier</p>
-                  </div>
-                  <div className="flex gap-2 text-[9px] font-bold text-slate-500 items-center select-none font-mono">
-                    <span className="px-1 py-0.2 bg-slate-100 dark:bg-slate-800 rounded">0</span>
-                    <span className="px-1 py-0.2 bg-emerald-100 text-emerald-700 rounded">1</span>
-                    <span className="px-1 py-0.2 bg-cyan-100 text-cyan-700 rounded">2</span>
-                    <span className="px-1 py-0.2 bg-amber-100 text-amber-700 rounded">3</span>
-                    <span className="px-1 py-0.2 bg-orange-100 text-orange-700 rounded">4</span>
-                    <span className="px-1 py-0.2 bg-rose-100 text-rose-700 rounded">5</span>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">SCS</th>
-                        <th className="pb-3 text-center">Mon 27</th>
-                        <th className="pb-3 text-center">Tue 28</th>
-                        <th className="pb-3 text-center">Wed 29</th>
-                        <th className="pb-3 text-center">Thu 30</th>
-                        <th className="pb-3 text-center">Fri 31</th>
-                        <th className="pb-3 text-center">Sat 1</th>
-                        <th className="pb-3 text-center">Sun 2</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5 text-center font-mono">
-                      {[
-                        { scs: "TSgt Lee", title: "Senior SCS", mon: 4, tue: 4, wed: 2, thu: 3, fri: 3, sat: 1, sun: 0 },
-                        { scs: "SSgt Park", title: "SCS - Bravo", mon: 3, tue: 3, wed: 5, thu: 3, fri: 3, sat: 2, sun: 0 },
-                        { scs: "SrA Diaz", title: "SCS - assist", mon: 2, tue: 2, wed: 1, thu: 2, fri: 2, sat: 2, sun: 0 },
-                        { scs: "Capt Shah", title: "PT/IM", mon: 3, tue: 4, wed: 3, thu: 3, fri: 2, sat: 0, sun: 0 },
-                        { scs: "CPT Lead", title: "OFT - tempo", mon: 2, tue: 3, wed: 3, thu: 2, fri: 2, sat: 4, sun: 0 }
-                      ].map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-3 text-left font-bold font-sans">
-                            <span className="text-slate-800 dark:text-white block leading-tight">{row.scs}</span>
-                            <span className="text-[10px] text-slate-400 block font-normal mt-0.5">{row.title}</span>
-                          </td>
-                          {[row.mon, row.tue, row.wed, row.thu, row.fri, row.sat, row.sun].map((val, i) => {
-                            const bg = 
-                              val === 5 ? "bg-rose-500/15 text-rose-500 border border-rose-500/25" :
-                              val === 4 ? "bg-orange-500/15 text-orange-500 border border-orange-500/25" :
-                              val === 3 ? "bg-amber-500/15 text-amber-500 border border-amber-500/25" :
-                              val === 2 ? "bg-cyan-500/15 text-cyan-500 border border-cyan-500/25" :
-                              val === 1 ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25" :
-                              "bg-slate-100 dark:bg-slate-800 text-slate-400";
+                          {(dashboard?.operators ?? []).map((row, index) => {
+                            const id = getRecordId(row);
                             return (
-                              <td key={i} className="py-3 text-center">
-                                <span className={`inline-block size-6 rounded-md font-bold text-xs flex items-center justify-center mx-auto ${bg}`}>
-                                  {val}
-                                </span>
-                              </td>
+                              <tr key={String(id ?? index)}>
+                                <td className="py-3 font-semibold text-slate-900 dark:text-white">{getRecordTitle(row)}</td>
+                                <td className="py-3 text-slate-500">{stringifyValue(getRecordValue(row, ["role", "rank_grade", "readiness_component", "pathway_name"]))}</td>
+                                <td className="py-3">
+                                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone(String(getRecordValue(row, ["status", "current_status", "queue_status"])))}`}>
+                                    {stringifyValue(getRecordValue(row, ["status", "current_status", "queue_status"]))}
+                                  </span>
+                                </td>
+                                <td className="py-3 text-slate-500">{stringifyValue(getRecordValue(row, ["flight_name", "unit_name", "unit"]))}</td>
+                                <td className="py-3">
+                                  <button
+                                    onClick={() => {
+                                      if (id) {
+                                        setSelectedUserId(id);
+                                        setActiveTab("people");
+                                      }
+                                    }}
+                                    className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:text-slate-200"
+                                    disabled={!id}
+                                    type="button"
+                                  >
+                                    Open
+                                  </button>
+                                </td>
+                              </tr>
                             );
                           })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          {(dashboard?.operators ?? []).length === 0 && <EmptyRow colSpan={5} label="No live operators are currently returned for this SCS login." />}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
 
-                <p className="text-[9px] text-slate-500 font-mono text-left pt-2 border-t border-slate-100 dark:border-white/5">
-                  Peak Wednesday - SSgt Park at 5/5. Recommend splitting Wed OFT prep between two leads.
-                </p>
-              </div>
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <Card>
+                      <CardHeader title="Scoped Workouts" subtitle="Live workouts from `/workouts` for this role." />
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="text-slate-400">
+                            <tr>
+                              <th className="pb-3 font-semibold">Title</th>
+                              <th className="pb-3 font-semibold">Date</th>
+                              <th className="pb-3 font-semibold">Status</th>
+                              <th className="pb-3 font-semibold">Type</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                            {workoutRows.slice(0, 12).map((row, index) => (
+                              <tr key={String(getRecordId(row) ?? index)}>
+                                <td className="py-3 font-semibold text-slate-900 dark:text-white">{getRecordTitle(row)}</td>
+                                <td className="py-3 text-slate-500">{formatDate(String(getRecordValue(row, ["date", "completed_at", "scheduled_for"])))}</td>
+                                <td className="py-3">
+                                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone(String(getRecordValue(row, ["status"])))}`}>
+                                    {stringifyValue(getRecordValue(row, ["status"]))}
+                                  </span>
+                                </td>
+                                <td className="py-3 text-slate-500">{stringifyValue(getRecordValue(row, ["activity_type", "type"]))}</td>
+                              </tr>
+                            ))}
+                            {workoutRows.length === 0 && <EmptyRow colSpan={4} label="No scoped workouts are currently returned." />}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Card>
 
-              {/* Bottom splits roster table & leave widgets */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                
-                {/* OFT clearance status */}
-                <div className="lg:col-span-6 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left">
-                  <div className="border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">OFT clearance status - 7</h3>
-                    <p className="text-[9px] text-slate-500">By airman &middot; grouped by flight</p>
-                  </div>
-
-                  <div className="overflow-x-auto my-3">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          <th className="pb-2">Airman</th>
-                          <th className="pb-2">Flight</th>
-                          <th className="pb-2">Ops</th>
-                          <th className="pb-2">Lane</th>
-                          <th className="pb-2 text-right">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                        {[
-                          { name: "T. Cho", fl: "Bravo", ops: "68", lane: "Tempo", status: "Cleared", col: "green" },
-                          { name: "K. Patel", fl: "Charlie", ops: "66", lane: "Standard", status: "Cleared", col: "green" },
-                          { name: "M. Hayes", fl: "Alpha", ops: "74", lane: "Tempo", status: "Cleared", col: "green" },
-                          { name: "B. Ndiaye", fl: "Bravo", ops: "71", lane: "Standard", status: PLAN_STATUSES.PENDING_REVIEW, col: "orange" },
-                          { name: "D. Okafor", fl: "Alpha", ops: "58", lane: "Standard", status: PLAN_STATUSES.PENDING_REVIEW, col: "orange" },
-                          { name: "R. Singh", fl: "Charlie", ops: "70", lane: "Tempo", status: PLAN_STATUSES.DRAFT, col: "blue" },
-                          { name: "S. Bauer", fl: "Alpha", ops: "64", lane: "Standard", status: PLAN_STATUSES.DRAFT, col: "blue" }
-                        ].map((row, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/20 transition">
-                            <td className="py-2.5 font-bold">{row.name}</td>
-                            <td className="py-2.5 text-slate-500">{row.fl}</td>
-                            <td className="py-2.5 font-mono text-slate-500">{row.ops}</td>
-                            <td className="py-2.5 text-slate-500 font-medium">{row.lane}</td>
-                            <td className="py-2.5 text-right">
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                row.col === "green" ? "bg-emerald-500/10 text-emerald-500" :
-                                row.col === "orange" ? "bg-amber-500/10 text-amber-500" : "bg-sky-500/10 text-sky-500"
-                              }`}>
-                                {row.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Upcoming PT sessions */}
-                <div className="lg:col-span-6 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left">
-                  <div className="border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Upcoming PT sessions</h3>
-                    <p className="text-[9px] text-slate-500">Next 7 days &middot; 5 SCS staff</p>
-                  </div>
-
-                  <div className="overflow-x-auto my-3">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          <th className="pb-2">Date</th>
-                          <th className="pb-2">Time</th>
-                          <th className="pb-2">Group</th>
-                          <th className="pb-2">Lead</th>
-                          <th className="pb-2 w-1/4 text-right">Capacity</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                        {[
-                          { date: "Mon 27 Jul", time: "07:00", grp: "Alpha - Strength", lead: "TSgt Lee", pct: "80%", col: "bg-emerald-500", week: "this" },
-                          { date: "Mon 27 Jul", time: "14:00", grp: "OFT prep - Tempo", lead: "SSgt Park", pct: "60%", col: "bg-[var(--brand-color)]", week: "this" },
-                          { date: "Tue 28 Jul", time: "07:00", grp: "Alpha - Strength", lead: "TSgt Lee", pct: "80%", col: "bg-emerald-500", week: "this" },
-                          { date: "Tue 28 Jul", time: "11:00", grp: "Rehab - 4", lead: "TSgt Lee", pct: "40%", col: "bg-amber-500", week: "this" },
-                          { date: "Wed 29 Jul", time: "09:00", grp: "Bravo - Endurance", lead: "SSgt Park", pct: "40%", col: "bg-amber-500", week: "this" },
-                          { date: "Wed 29 Jul", time: "16:00", grp: "Mobility - 8", lead: "SrA Diaz", pct: "60%", col: "bg-[var(--brand-color)]", week: "this" },
-                          { date: "Thu 30 Jul", time: "07:00", grp: "Alpha - Strength", lead: "TSgt Lee", pct: "80%", col: "bg-emerald-500", week: "this" },
-                          { date: "Mon 3 Aug", time: "07:00", grp: "Alpha - Strength", lead: "TSgt Lee", pct: "70%", col: "bg-emerald-500", week: "next" },
-                          { date: "Tue 4 Aug", time: "14:00", grp: "OFT prep - Tempo", lead: "SSgt Park", pct: "50%", col: "bg-amber-500", week: "next" }
-                        ].filter((row) => coverageWeek === "Month" || (coverageWeek === "This week" ? row.week === "this" : row.week === "next")).map((row, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/20 transition">
-                            <td className="py-2 font-bold">{row.date}</td>
-                            <td className="py-2 font-mono text-slate-500">{row.time}</td>
-                            <td className="py-2 text-slate-700 dark:text-slate-300 font-medium">{row.grp}</td>
-                            <td className="py-2 text-slate-500">{row.lead}</td>
-                            <td className="py-2 text-right">
-                              <div className="flex items-center justify-end gap-2 font-mono text-[9px]">
-                                <span>{row.pct}</span>
-                                <div className="w-12 h-1 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${row.col}`} style={{ width: row.pct }}></div>
-                                </div>
+                    <Card>
+                      <CardHeader title="Performance Summaries" subtitle="User-scoped summaries for the selected operator." />
+                      {performanceSummaries?.summaries.length ? (
+                        <div className="space-y-3">
+                          {performanceSummaries.summaries.map((summary, index) => (
+                            <div key={String(getRecordId(summary) ?? index)} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
+                              <p className="text-sm font-bold text-slate-900 dark:text-white">{getRecordTitle(summary)}</p>
+                              <p className="mt-1 text-xs text-slate-500">{getRecordSubtitle(summary)}</p>
+                              <div className="mt-3 grid gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                                {Object.entries(summary).slice(0, 6).map(([key, value]) => (
+                                  <div key={key} className="flex items-center justify-between gap-3">
+                                    <span className="font-semibold text-slate-500">{formatLabel(key)}</span>
+                                    <span className="text-right font-mono">{stringifyValue(value)}</span>
+                                  </div>
+                                ))}
                               </div>
-                            </td>
-                          </tr>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <EmptyState label="No performance summaries are returned for the selected operator." />
+                      )}
+                    </Card>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "people" && (
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader title="Operator Scope" subtitle="Pick a real operator from the backend roster for scoped SCS records." />
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <select
+                        value={selectedUserId}
+                        onChange={(event) => setSelectedUserId(event.target.value)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                      >
+                        {operatorOptions.length === 0 && <option value="">No operators returned</option>}
+                        {operatorOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.name} • {option.subtitle}
+                          </option>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Leave overlap, Hours coverage grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-left font-sans items-stretch">
-                
-                {/* Leave Overlap */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Leave overlap - next 30 days</h3>
-                    <p className="text-[9px] text-slate-500">SCS, PT/IM, OFT staff</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
-                    <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
-                      <span className="font-extrabold text-slate-800 dark:text-white block">TSgt Lee</span>
-                      <span className="text-[10px] text-slate-500 block font-mono">No leave</span>
-                    </div>
-                    
-                    <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl space-y-1 text-center">
-                      <span className="font-extrabold text-amber-600 block">SSgt Park</span>
-                      <span className="text-[10px] text-amber-500 block font-mono">27 Jul - 29 Jul · 3 days</span>
-                      <span className="px-1.5 py-0.2 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
-                        overlap Med
-                      </span>
-                    </div>
-
-                    <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
-                      <span className="font-extrabold text-slate-800 dark:text-white block">SrA Diaz</span>
-                      <span className="text-[10px] text-slate-500 block font-mono">No leave</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Hours Coverage stats */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                    <div className="text-left">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked</p>
-                    </div>
-                    <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
-                      95% target
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 text-xs font-sans text-left">
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">160</span>
-                      <span className="text-[9px] text-slate-500 block">Cap 200</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">152</span>
-                      <span className="text-[9px] text-emerald-500 block">95% of scheduled</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">1,128 / 2,080</span>
-                      <span className="text-[9px] text-slate-500 block">54% on pace</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
-                      <span className="font-bold text-rose-500 block">8</span>
-                      <span className="text-[9px] text-slate-500 block">2 due to leave</span>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* RSD Coverage block split with RTP+RTD box */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
-                
-                {/* RSD coverage */}
-                <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">RSD coverage (separate)</h3>
-                      <p className="text-[9px] text-slate-500">Restricted-status duty sessions tracked separately</p>
-                    </div>
-                    <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded font-mono">
-                      36 / 20
-                    </span>
-                  </div>
-
-                  <p className="text-[10px] text-slate-500 leading-normal pt-4">
-                    Restricted-status duty sessions are logged under compliance guidelines to assure zero training overlap for active reconditioning profiles.
-                  </p>
-                </div>
-
-                {/* RTP + RTD Guide box */}
-                <div className="bg-[#f8fafc] dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 text-left text-xs space-y-3 font-sans">
-                  <span className="font-bold text-slate-800 dark:text-white block uppercase tracking-wider text-[9px]">RTP + RTD &mdash; separate paths</span>
-                  <div className="space-y-2">
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-[var(--brand-color)] block">RTP (Return to Performance)</span>
-                      <p className="text-slate-500 leading-normal font-normal">
-                        is managed in Ascend: SCS + PT/IM coordinate reconditioning, training load, and progression.
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-amber-500 block">RTD (Return to Duty)</span>
-                      <p className="text-slate-500 leading-normal font-normal">
-                        requires source-authority + decision date + verification + reevaluation/expiration. RTD is only surfaced when all four fields are present, and SCS never edits it.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Refresh Footer */}
-              <div className="text-[10px] text-slate-400 select-none font-mono text-left pt-4">
-                Coverage &middot; last refresh 28 Jul 06:42 &middot; CUI // OPSEC
-              </div>
-
-            </div>
-          )}
-
-          {/* Tab 6: MESSAGES CHAT THREAD VIEW */}
-          {activeTab === "messages" && !reviewingAirmanId && (
-            <div className="space-y-8 animate-fade-in pb-16">
-              
-              {/* Header Section */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-4">
-                <div className="text-left">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-wider">SCS - MESSAGES</p>
-                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">Messages</h1>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                    Direct messages with your airmen. Every send is audit-logged.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg text-[9px] font-bold uppercase tracking-wider font-mono">
-                    Population: {POPULATION_LEVELS.INDIVIDUAL}
-                  </span>
-                  <button
-                    onClick={() => setShowNewDmModal(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    + New message
-                  </button>
-                </div>
-              </div>
-
-              {/* Chat View splits grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start text-left font-sans text-xs">
-                
-                {/* Left Side: Inbox search list */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
-                    <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-600 text-[8.5px] font-bold rounded-full uppercase tracking-wider font-mono">
-                      7 unread
-                    </span>
-                  </div>
-
-                  {/* Search box */}
-                  <div className="relative">
-                    <input
-                      type="text"
-                      aria-label="Search messages"
-                      placeholder="Search messages"
-                      className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-55 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400"
-                    />
-                    <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
-                  </div>
-
-                  {/* Chats list */}
-                  <div className="space-y-2">
-                    {[
-                      { name: "J. Reyes", role: "SrA · Alpha flight", preview: "Ready for mobility \u2014 good to move to bloc...", time: "06:18", unread: 2 },
-                      { name: "A. Mendez", role: "SSgt · Bravo flight", preview: "Sleep timing past 3 nights", time: "Yest", unread: 1 },
-                      { name: "T. Cho", role: "A1C · Alpha flight", preview: "OFT cleared \u2014 thanks TSgt", time: "Yest", unread: 1 },
-                      { name: "D. Okafor", role: "SSgt · Alpha flight", preview: "Hip \u2014 still tight after rehab", time: "23 Jul", unread: 3 },
-                      { name: "B. Ndiaye", role: "A1C · Charlie flight", preview: "Mobility reset \u2014 what level?", time: "25 Jul" },
-                      { name: "K. Patel", role: "A1C · Bravo flight", preview: "OFT tempo prep · week 2", time: "24 Jul" },
-                      { name: "M. Hayes", role: "SrA · Alpha flight", preview: "Cycle 4 \u2014 red-line felt good", time: "20 Jul" },
-                      { name: "Capt Shah · PT/IM", role: "Clinician co-owner", preview: "Coordination checklist response", time: "19 Jul" }
-                    ].map((chat, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() => {
-                          setSelectedChatId(chat.name);
-                          triggerToast(`Switched thread: ${chat.name}`);
-                        }}
-                        className={`p-3 rounded-xl border text-left cursor-pointer transition ${
-                          selectedChatId === chat.name 
-                            ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]" 
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 hover:border-slate-300"
-                        }`}
+                        {currentUser?.id && !operatorOptions.some((option) => option.id === currentUser.id) && (
+                          <option value={currentUser.id}>
+                            {currentUser.name} • {currentUser.unit}
+                          </option>
+                        )}
+                      </select>
+                      <button
+                        onClick={() => void loadSelectedUser(selectedUserId)}
+                        className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white"
+                        type="button"
                       >
-                        <div className="flex items-center justify-between font-mono text-[9px] gap-2">
-                          <span className="font-bold text-slate-800 dark:text-white font-sans text-xs">{chat.name}</span>
-                          <span className="text-slate-500">{chat.time}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 block leading-tight mt-0.5 font-sans font-medium">{chat.role}</span>
-                        <div className="flex items-center justify-between gap-4 mt-2">
-                          <p className="text-[10px] text-slate-500 truncate w-48 font-sans">{chat.preview}</p>
-                          {chat.unread && (
-                            <span className="size-4 bg-[var(--brand-color)] text-white text-[8px] font-bold rounded-full flex items-center justify-center font-mono">
-                              {chat.unread}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                </div>
-
-                {/* Right Side: Active Chat dialog thread */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
-                  
-                  {/* Chat Header */}
-                  <div className="p-4 border-b border-slate-100 dark:border-white/5 bg-[#f8fafc] dark:bg-slate-900/60 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="size-8 rounded-full bg-cyan-500/10 text-[var(--brand-color)] font-bold text-xs flex items-center justify-center select-none font-mono">
-                        {selectedChatId.charAt(0)}
-                      </div>
-                      <div className="text-left">
-                        <span className="font-bold text-slate-800 dark:text-white block text-sm">{selectedChatId}</span>
-                        <span className="text-[10px] text-slate-500 block mt-0.5">
-                          {selectedChatId === "J. Reyes" ? "SrA · Alpha flight · Rehab Block 2" : "Active chat recipient"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {selectedChatId === "J. Reyes" && (
-                      <button 
-                        onClick={() => { setReviewingAirmanId("J. Reyes"); triggerToast("Opening full profile for J. Reyes"); }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 text-[10px] font-bold rounded-lg text-slate-700 dark:text-slate-300 transition cursor-pointer"
-                      >
-                        View profile
+                        Reload
                       </button>
-                    )}
-                  </div>
-
-                  {/* Chat bubbles list */}
-                  <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50/50 dark:bg-[#0e1628]">
-                    
-                    {/* Timestamp separator */}
-                    <div className="text-center font-mono text-[9px] text-slate-400 select-none uppercase tracking-wider">
-                      27 July
                     </div>
+                  </Card>
 
-                    {(chatThreads[selectedChatId] || []).map((msg, i) => (
-                      <div key={i} className={`flex ${msg.sender === "scs" ? "justify-end" : "justify-start"}`}>
-                        <div className={`p-4 rounded-2xl max-w-sm text-xs leading-relaxed space-y-1.5 ${
-                          msg.sender === "scs" 
-                            ? "bg-[#008094] text-white rounded-tr-none text-left" 
-                            : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 text-slate-700 dark:text-slate-300 rounded-tl-none text-left"
-                        }`}>
-                          <p className="font-sans font-medium">{msg.text}</p>
-                          <span className={`text-[8px] font-mono block text-right leading-none ${
-                            msg.sender === "scs" ? "text-cyan-200" : "text-slate-400"
-                          }`}>{msg.time}</span>
-                        </div>
-                      </div>
-                    ))}
-
-                  </div>
-
-                  {/* Message Input Box */}
-                  <div className="p-4 border-t border-slate-100 dark:border-white/5 bg-[#f8fafc] dark:bg-slate-900/60 space-y-3">
-                    
-                    <div className="text-center text-[9px] text-slate-400 font-mono select-none">
-                      Messages in this thread are audit-logged
-                    </div>
-
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        aria-label={`Message ${selectedChatId}`}
-                        placeholder={`Message ${selectedChatId}`}
-                        value={typedMessage}
-                        onChange={(e) => setTypedMessage(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                        className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400"
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <Card>
+                      <CardHeader title="OFT Record" subtitle="Direct response from `/oft/{user_id}`." />
+                      <SimpleKeyValueList
+                        rows={[
+                          { label: "Current status", value: oftRecord?.current_status ?? "—" },
+                          { label: "Latest pass/fail", value: oftRecord?.latest_pass_fail ?? "—" },
+                          { label: "Latest test date", value: formatDate(oftRecord?.latest_test_date) },
+                          { label: "Items passed", value: formatNumber(oftRecord?.items_passed) },
+                          { label: "Items total", value: formatNumber(oftRecord?.items_total) },
+                          { label: "Next scheduled", value: formatDate(oftRecord?.next_scheduled_date) },
+                          { label: "Relative", value: oftRecord?.next_scheduled_relative ?? "—" },
+                        ]}
                       />
-                      <button 
-                        onClick={handleSendMessage}
-                        className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                      >
-                        Send
-                      </button>
-                    </div>
+                    </Card>
 
+                    <Card className="xl:col-span-2">
+                      <CardHeader title="Restrictions" subtitle="Live restriction list and release actions." />
+                      {(restrictions?.restrictions ?? []).length === 0 ? (
+                        <EmptyState label="No active restrictions are returned for this user." />
+                      ) : (
+                        <div className="space-y-3">
+                          {(restrictions?.restrictions ?? []).map((row, index) => {
+                            const restrictionId = getRecordId(row);
+                            return (
+                              <div key={String(restrictionId ?? index)} className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900 dark:text-white">{stringifyValue(getRecordValue(row, ["description", "title", "status"]))}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {formatLabel(String(getRecordValue(row, ["required_phase", "phase"])))}
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    if (!accessToken || !restrictionId) {
+                                      return;
+                                    }
+                                    setIsMutating(true);
+                                    try {
+                                      await releaseReconditioningRestriction(accessToken, restrictionId);
+                                      triggerToast("Restriction released from the live backend.");
+                                      await loadSelectedUser(selectedUserId);
+                                    } catch (nextError) {
+                                      triggerToast(getApiErrorMessage(nextError));
+                                    } finally {
+                                      setIsMutating(false);
+                                    }
+                                  }}
+                                  disabled={!restrictionId || isMutating}
+                                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:text-slate-200"
+                                  type="button"
+                                >
+                                  Release
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </Card>
                   </div>
 
+                  <Card>
+                    <CardHeader title="Reconditioning Timeline" subtitle="Event stream returned by `/records/reconditioning-plan/{user_id}/timeline`." />
+                    {(timeline?.events ?? []).length === 0 ? (
+                      <EmptyState label="No timeline events are available for the selected user." />
+                    ) : (
+                      <div className="space-y-3">
+                        {(timeline?.events ?? []).map((event, index) => (
+                          <div key={String(getRecordId(event) ?? index)} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                              <p className="text-sm font-bold text-slate-900 dark:text-white">{getRecordTitle(event)}</p>
+                              <span className="text-[11px] font-mono text-slate-500">{formatDate(String(getRecordValue(event, ["date", "created_at", "event_date"])), true)}</span>
+                            </div>
+                            <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                              {stringifyValue(getRecordValue(event, ["description", "summary", "note", "details"]))}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
                 </div>
+              )}
 
-              </div>
+              {activeTab === "plans" && (
+                <div className="space-y-6">
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <Card>
+                      <CardHeader title="Actions" subtitle="Write-path integration for recommendations, reconditioning plans, and restrictions." />
+                      <div className="space-y-3">
+                        <button onClick={() => setShowRecommendationModal(true)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200" type="button">
+                          <span>Assign recommendation</span>
+                          <Plus className="size-4" />
+                        </button>
+                        <button onClick={() => setShowPlanModal(true)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200" type="button">
+                          <span>Upsert reconditioning plan</span>
+                          <ClipboardList className="size-4" />
+                        </button>
+                        <button onClick={() => setShowRestrictionModal(true)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200" type="button">
+                          <span>Add restriction</span>
+                          <Activity className="size-4" />
+                        </button>
+                      </div>
+                    </Card>
 
-              {/* Prototype notice footer */}
-              <div className="text-[10px] text-slate-400 select-none font-mono text-left pt-4">
-                Ascend &middot; SCS Workspace prototype &middot; v0.1
-              </div>
+                    <Card className="xl:col-span-2">
+                      <CardHeader title="Current User Scope" subtitle="The selected operator drives plan, summary, OFT, and restriction endpoints." />
+                      <SimpleKeyValueList
+                        rows={[
+                          { label: "Selected operator", value: selectedOperator?.name ?? currentUser?.name ?? "—" },
+                          { label: "Flight / unit", value: selectedOperator?.subtitle ?? currentUser?.unit ?? "—" },
+                          { label: "Active recommendations", value: formatNumber(recommendationRows.length) },
+                          { label: "Restrictions", value: formatNumber(restrictions?.restrictions.length) },
+                          { label: "Timeline events", value: formatNumber(timeline?.events.length) },
+                          { label: "Performance summaries", value: formatNumber(performanceSummaries?.summaries.length) },
+                        ]}
+                      />
+                    </Card>
+                  </div>
 
-            </div>
+                  <Card>
+                    <CardHeader title="Live Recommendation Feed" subtitle="No frontend seed rows remain here; this is the backend list only." />
+                    {recommendationRows.length === 0 ? (
+                      <EmptyState label="No recommendation rows are currently available." />
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="text-slate-400">
+                            <tr>
+                              <th className="pb-3 font-semibold">Title</th>
+                              <th className="pb-3 font-semibold">Component</th>
+                              <th className="pb-3 font-semibold">Provider</th>
+                              <th className="pb-3 font-semibold">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                            {recommendationRows.map((row, index) => (
+                              <tr key={String(getRecordId(row) ?? index)}>
+                                <td className="py-3 font-semibold text-slate-900 dark:text-white">{getRecordTitle(row)}</td>
+                                <td className="py-3 text-slate-500">{stringifyValue(getRecordValue(row, ["readiness_component"]))}</td>
+                                <td className="py-3 text-slate-500">{stringifyValue(getRecordValue(row, ["assigned_provider_name", "provider_name"]))}</td>
+                                <td className="py-3">
+                                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone(String(getRecordValue(row, ["status", "state"])))}`}>
+                                    {stringifyValue(getRecordValue(row, ["status", "state"]))}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </Card>
+                </div>
+              )}
+
+              {activeTab === "coverage" && (
+                <div className="space-y-6">
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <MetricCard title="Coverage Logs" value={formatNumber(coverageLogs.length)} subtext="Current provider log count from the backend." />
+                    <MetricCard title="Flights in Load" value={formatNumber(coverageLoad?.flights.length)} subtext="Real flight rows returned." />
+                    <MetricCard title="Flights At Threshold" value={formatPercent(coverageLoad && coverageLoad.total_flights > 0 ? (coverageLoad.flights_meeting_cohort_minimum / coverageLoad.total_flights) * 100 : null)} subtext="Based on backend minimum cohort rules." />
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <Card>
+                      <CardHeader title="Coverage Actions" subtitle="Real PT sessions and leave tracking from the coverage backend." />
+                      <div className="space-y-3">
+                        <button onClick={() => setShowPtSessionModal(true)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200" type="button">
+                          <span>Schedule PT session</span>
+                          <Calendar className="size-4" />
+                        </button>
+                        <button onClick={() => setShowLeaveModal(true)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200" type="button">
+                          <span>Log leave / TDY</span>
+                          <Plus className="size-4" />
+                        </button>
+                      </div>
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Upcoming PT Sessions" subtitle={`Live sessions for the next ${formatNumber(ptSessions?.window_days)} days.`} />
+                      <SimpleKeyValueList
+                        rows={[
+                          { label: "Session rows", value: formatNumber(ptSessions?.sessions.length) },
+                          { label: "Window days", value: formatNumber(ptSessions?.window_days) },
+                          { label: "My leave rows", value: formatNumber(leaveHistory?.records?.length ?? leaveHistory?.leave?.length ?? 0) },
+                          { label: "Overlap pairs", value: formatNumber(leaveOverlap?.overlapping_pairs?.length ?? leaveOverlap?.overlaps?.length ?? 0) },
+                        ]}
+                      />
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Session Actions" subtitle="Update session status, enroll an attendee, or remove one using live IDs." />
+                      <div className="space-y-3 text-xs">
+                        <input value={sessionActionForm.sessionId} onChange={(event) => setSessionActionForm((prev) => ({ ...prev, sessionId: event.target.value.trim() }))} placeholder="Session ID" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-900" />
+                        <select value={sessionActionForm.status} onChange={(event) => setSessionActionForm((prev) => ({ ...prev, status: event.target.value }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-900">
+                          <option value="scheduled">scheduled</option>
+                          <option value="completed">completed</option>
+                          <option value="cancelled">cancelled</option>
+                        </select>
+                        <input value={sessionActionForm.capacity} onChange={(event) => setSessionActionForm((prev) => ({ ...prev, capacity: event.target.value }))} placeholder="Capacity override (optional)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-900" />
+                        <input value={sessionActionForm.attendeeUserId} onChange={(event) => setSessionActionForm((prev) => ({ ...prev, attendeeUserId: event.target.value.trim() }))} placeholder="Attendee user ID" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-900" />
+                        <div className="flex gap-3">
+                          <button
+                            onClick={async () => {
+                              if (!accessToken || !sessionActionForm.sessionId) return;
+                              setIsMutating(true);
+                              try {
+                                await updatePtSession(accessToken, sessionActionForm.sessionId, {
+                                  status: sessionActionForm.status,
+                                  capacity: sessionActionForm.capacity ? Number(sessionActionForm.capacity) : undefined,
+                                });
+                                triggerToast("PT session updated in the backend.");
+                                await refreshAll();
+                              } catch (nextError) {
+                                triggerToast(getApiErrorMessage(nextError));
+                              } finally {
+                                setIsMutating(false);
+                              }
+                            }}
+                            disabled={!sessionActionForm.sessionId || isMutating}
+                            className="flex-1 rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:text-slate-200"
+                            type="button"
+                          >
+                            Update
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!accessToken || !sessionActionForm.sessionId || !sessionActionForm.attendeeUserId) return;
+                              setIsMutating(true);
+                              try {
+                                await enrollPtSessionAttendee(accessToken, sessionActionForm.sessionId, sessionActionForm.attendeeUserId);
+                                triggerToast("Attendee enrolled in the backend.");
+                                await refreshAll();
+                              } catch (nextError) {
+                                triggerToast(getApiErrorMessage(nextError));
+                              } finally {
+                                setIsMutating(false);
+                              }
+                            }}
+                            disabled={!sessionActionForm.sessionId || !sessionActionForm.attendeeUserId || isMutating}
+                            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 font-semibold text-white disabled:opacity-50"
+                            type="button"
+                          >
+                            Enroll
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!accessToken || !sessionActionForm.sessionId || !sessionActionForm.attendeeUserId) return;
+                              setIsMutating(true);
+                              try {
+                                await removePtSessionAttendee(accessToken, sessionActionForm.sessionId, sessionActionForm.attendeeUserId);
+                                triggerToast("Attendee removed in the backend.");
+                                await refreshAll();
+                              } catch (nextError) {
+                                triggerToast(getApiErrorMessage(nextError));
+                              } finally {
+                                setIsMutating(false);
+                              }
+                            }}
+                            disabled={!sessionActionForm.sessionId || !sessionActionForm.attendeeUserId || isMutating}
+                            className="flex-1 rounded-xl border border-rose-200 px-4 py-2 font-semibold text-rose-600 disabled:opacity-50 dark:border-rose-500/30"
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+
+                  <Card>
+                    <CardHeader title="Reconditioning Load By Flight" subtitle="Real backend coverage load. Removed all placeholder columns not supported by the API." />
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="text-slate-400">
+                          <tr>
+                            <th className="pb-3 font-semibold">Flight</th>
+                            <th className="pb-3 font-semibold">Cohort</th>
+                            <th className="pb-3 font-semibold">Active Plans</th>
+                            <th className="pb-3 font-semibold">On Track</th>
+                            <th className="pb-3 font-semibold">Overdue Reviews</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                          {(coverageLoad?.flights ?? []).map((row, index) => (
+                            <tr key={String(getRecordId(row) ?? index)}>
+                              <td className="py-3 font-semibold text-slate-900 dark:text-white">{getRecordTitle(row)}</td>
+                              <td className="py-3 text-slate-500">{formatNumber(getRecordValue(row, ["cohort_size"]))}</td>
+                              <td className="py-3 text-slate-500">{formatNumber(getRecordValue(row, ["active_plan_count"]))}</td>
+                              <td className="py-3 text-slate-500">{stringifyValue(getRecordValue(row, ["on_track"]))}</td>
+                              <td className="py-3 text-slate-500">{formatNumber(getRecordValue(row, ["overdue_review_count"]))}</td>
+                            </tr>
+                          ))}
+                          {(coverageLoad?.flights ?? []).length === 0 && <EmptyRow colSpan={5} label="No coverage load rows are returned for this tenant yet." />}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <CardHeader title="My Coverage Logs" subtitle="Provider log history for the current SCS user ID." />
+                    {coverageLogs.length === 0 ? (
+                      <EmptyState label="No coverage logs are currently recorded for this provider." />
+                    ) : (
+                      <div className="space-y-3">
+                        {coverageLogs.map((row, index) => (
+                          <div key={String(getRecordId(row) ?? index)} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                              <p className="text-sm font-bold text-slate-900 dark:text-white">{stringifyValue(getRecordValue(row, ["role", "title", "status"]))}</p>
+                              <span className="font-mono text-[11px] text-slate-500">{formatDate(String(getRecordValue(row, ["coverage_date", "created_at"])), true)}</span>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                              Hours: {formatNumber(getRecordValue(row, ["hours"]))} · Weekend RSD: {stringifyValue(getRecordValue(row, ["is_weekend_rsd"]))}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <Card>
+                      <CardHeader title="PT Session List" subtitle="Real upcoming sessions with enrollment and capacity values." />
+                      {(ptSessions?.sessions ?? []).length === 0 ? (
+                        <EmptyState label="No upcoming PT sessions are returned right now." />
+                      ) : (
+                        <div className="space-y-3">
+                          {(ptSessions?.sessions ?? []).map((row, index) => (
+                            <div key={String(getRecordId(row) ?? index)} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
+                              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900 dark:text-white">{stringifyValue(getRecordValue(row, ["group_label", "title", "name"]))}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {formatDate(String(getRecordValue(row, ["session_date"])))}
+                                    {" · "}
+                                    {stringifyValue(getRecordValue(row, ["start_time"]))}
+                                    {" · "}
+                                    {stringifyValue(getRecordValue(row, ["focus_label", "focus"]))}
+                                  </p>
+                                </div>
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone(String(getRecordValue(row, ["status"])))}`}>
+                                  {stringifyValue(getRecordValue(row, ["status"]))}
+                                </span>
+                              </div>
+                              <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">
+                                Provider: {stringifyValue(getRecordValue(row, ["lead_provider_name"]))} · Enrolled: {formatNumber(getRecordValue(row, ["enrolled_count"]))} / {formatNumber(getRecordValue(row, ["capacity"]))} · Capacity: {formatPercent(getRecordValue(row, ["capacity_pct"]))}
+                              </p>
+                              <p className="mt-2 text-[11px] text-slate-400">Lead role: {stringifyValue(getRecordValue(row, ["lead_provider_role"]))}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Leave Overlap" subtitle="Real overlap window and the current provider’s leave history." />
+                      <div className="space-y-4">
+                        <SimpleKeyValueList
+                          rows={[
+                            { label: "Window days", value: formatNumber(getRecordValue(leaveOverlap as Record<string, unknown>, ["window_days", "days"])) },
+                            { label: "Overlap pairs", value: formatNumber(leaveOverlap?.overlapping_pairs?.length ?? leaveOverlap?.overlaps?.length ?? 0) },
+                            { label: "Window records", value: formatNumber((leaveOverlap as { records?: Array<Record<string, unknown>> } | null)?.records?.length ?? 0) },
+                            { label: "My leave records", value: formatNumber(leaveHistory?.records?.length ?? leaveHistory?.leave?.length ?? 0) },
+                          ]}
+                        />
+                        <JsonPreview data={leaveOverlap} emptyLabel="No leave overlap payload loaded." />
+                        <div className="flex flex-col gap-3 md:flex-row">
+                          <input
+                            value={leaveDeleteId}
+                            onChange={(event) => setLeaveDeleteId(event.target.value.trim())}
+                            placeholder="Leave record ID to delete"
+                            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                          <button
+                            onClick={async () => {
+                              if (!accessToken || !leaveDeleteId) return;
+                              setIsMutating(true);
+                              try {
+                                await deleteLeaveRecord(accessToken, leaveDeleteId);
+                                triggerToast("Leave record deleted from the backend.");
+                                setLeaveDeleteId("");
+                                await refreshAll();
+                              } catch (nextError) {
+                                triggerToast(getApiErrorMessage(nextError));
+                              } finally {
+                                setIsMutating(false);
+                              }
+                            }}
+                            disabled={!leaveDeleteId || isMutating}
+                            className="rounded-xl border border-rose-200 px-4 py-2 text-xs font-semibold text-rose-600 disabled:opacity-50 dark:border-rose-500/30"
+                            type="button"
+                          >
+                            Delete leave
+                          </button>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "messages" && (
+                <div className="space-y-6">
+                  <div className="grid gap-6 xl:grid-cols-3">
+                    <Card>
+                      <CardHeader title="Message Actions" subtitle="Content scan and send flow uses the real messaging endpoints." />
+                      <div className="space-y-3">
+                        <button onClick={() => setShowGroupModal(true)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200" type="button">
+                          <span>Create group thread</span>
+                          <Plus className="size-4" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!accessToken || !scanBody.trim()) {
+                              return;
+                            }
+                            setIsMutating(true);
+                            try {
+                              const result = await scanMessage(accessToken, scanBody.trim());
+                              setScanResult(result);
+                              triggerToast("Message scanned against the live routing rules.");
+                            } catch (nextError) {
+                              triggerToast(getApiErrorMessage(nextError));
+                            } finally {
+                              setIsMutating(false);
+                            }
+                          }}
+                          disabled={!scanBody.trim() || isMutating}
+                          className="flex w-full items-center justify-between rounded-xl bg-[var(--brand-color)] px-4 py-3 text-left text-xs font-semibold text-white disabled:opacity-50"
+                          type="button"
+                        >
+                          <span>Scan draft</span>
+                          <Search className="size-4" />
+                        </button>
+                      </div>
+                    </Card>
+
+                    <Card className="xl:col-span-2">
+                      <CardHeader title="Routing Levels" subtitle="Backend-defined escalation logic from `/messaging/routing-levels`." />
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="text-slate-400">
+                            <tr>
+                              <th className="pb-3 font-semibold">Level</th>
+                              <th className="pb-3 font-semibold">Name</th>
+                              <th className="pb-3 font-semibold">Trigger</th>
+                              <th className="pb-3 font-semibold">Routing</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                            {(routingLevels?.levels ?? []).map((level) => (
+                              <tr key={level.level}>
+                                <td className="py-3 font-bold text-slate-900 dark:text-white">{level.level}</td>
+                                <td className="py-3 text-slate-500">{level.name}</td>
+                                <td className="py-3 text-slate-500">{level.trigger}</td>
+                                <td className="py-3 text-slate-500">{level.specialist_routing}</td>
+                              </tr>
+                            ))}
+                            {(routingLevels?.levels ?? []).length === 0 && <EmptyRow colSpan={4} label="No routing levels were returned." />}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Card>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <Card>
+                      <CardHeader title="Direct Threads" subtitle="Live thread list with on-demand thread detail fetch." />
+                      <div className="space-y-3">
+                        {(threadRows ?? []).map((row, index) => {
+                          const otherUserId = getRecordId(row);
+                          const active = otherUserId === selectedThreadUserId;
+                          return (
+                            <button
+                              key={String(otherUserId ?? index)}
+                              onClick={() => {
+                                if (otherUserId) {
+                                  setSelectedThreadUserId(otherUserId);
+                                  setDirectMessageForm((prev) => ({ ...prev, recipientId: otherUserId }));
+                                }
+                              }}
+                              className={`w-full rounded-2xl border p-4 text-left transition ${
+                                active
+                                  ? "border-[var(--brand-color)] bg-[var(--brand-color)]/5"
+                                  : "border-slate-100 bg-slate-50 hover:border-slate-200 dark:border-white/5 dark:bg-slate-900/50"
+                              }`}
+                              disabled={!otherUserId}
+                              type="button"
+                            >
+                              <p className="text-sm font-bold text-slate-900 dark:text-white">{getRecordTitle(row)}</p>
+                              <p className="mt-1 text-xs text-slate-500">{getRecordSubtitle(row)}</p>
+                              <p className="mt-2 text-[11px] text-slate-400">{stringifyValue(getRecordValue(row, ["preview", "last_message", "body"]))}</p>
+                            </button>
+                          );
+                        })}
+                        {threadRows.length === 0 && <EmptyState label="No direct threads are currently available for this SCS role." />}
+                      </div>
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Direct Thread Detail" subtitle="Fetched from `/messaging/thread/{other_user_id}`." />
+                      <div className="space-y-4">
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:border-white/5 dark:bg-slate-900/50 dark:text-slate-300">
+                          Conversation: <span className="font-semibold text-slate-700 dark:text-slate-100">{selectedThread ? getRecordTitle(selectedThread) : "No thread selected"}</span>
+                        </div>
+                        <input
+                          value={directMessageForm.recipientId}
+                          onChange={(event) => setDirectMessageForm((prev) => ({ ...prev, recipientId: event.target.value.trim() }))}
+                          placeholder="Recipient ID for send action"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                        <textarea
+                          value={directMessageForm.body}
+                          onChange={(event) => setDirectMessageForm((prev) => ({ ...prev, body: event.target.value }))}
+                          placeholder="Write a direct message"
+                          rows={5}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                        <input
+                          value={directMessageForm.relatedRecommendationId}
+                          onChange={(event) => setDirectMessageForm((prev) => ({ ...prev, relatedRecommendationId: event.target.value.trim() }))}
+                          placeholder="Related recommendation ID (optional)"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                        <div className="flex gap-3">
+                          <button
+                            onClick={async () => {
+                              if (!accessToken || !directMessageForm.recipientId || !directMessageForm.body.trim()) {
+                                return;
+                              }
+                              setIsMutating(true);
+                              try {
+                                await sendMessage(accessToken, {
+                                  recipient_id: directMessageForm.recipientId,
+                                  body: directMessageForm.body.trim(),
+                                  related_recommendation_id: directMessageForm.relatedRecommendationId || undefined,
+                                  file: messageFile ?? undefined,
+                                });
+                                setDirectMessageForm((prev) => ({ ...prev, body: "", relatedRecommendationId: "" }));
+                                setMessageFile(null);
+                                triggerToast("Direct message sent through the backend.");
+                                await loadDashboard();
+                                await loadThread(directMessageForm.recipientId);
+                              } catch (nextError) {
+                                triggerToast(getApiErrorMessage(nextError));
+                              } finally {
+                                setIsMutating(false);
+                              }
+                            }}
+                            disabled={!directMessageForm.recipientId || !directMessageForm.body.trim() || isMutating}
+                            className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                            type="button"
+                          >
+                            Send direct message
+                          </button>
+                          <button
+                            onClick={() => void loadThread(directMessageForm.recipientId)}
+                            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 dark:border-white/10 dark:text-slate-200"
+                            type="button"
+                          >
+                            Reload thread
+                          </button>
+                        </div>
+                        <JsonPreview data={threadDetail} emptyLabel="No direct thread detail has been loaded yet." />
+                      </div>
+                    </Card>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <Card>
+                      <CardHeader title="Group Threads" subtitle="Live group thread list from the messaging backend." />
+                      <div className="space-y-3">
+                        {groupThreadRows.map((row, index) => {
+                          const threadId = getRecordId(row);
+                          const active = threadId === selectedGroupThreadId;
+                          return (
+                            <button
+                              key={String(threadId ?? index)}
+                              onClick={() => {
+                                if (threadId) {
+                                  setSelectedGroupThreadId(threadId);
+                                  setGroupMessageForm((prev) => ({ ...prev, threadId }));
+                                }
+                              }}
+                              className={`w-full rounded-2xl border p-4 text-left transition ${
+                                active
+                                  ? "border-[var(--brand-color)] bg-[var(--brand-color)]/5"
+                                  : "border-slate-100 bg-slate-50 hover:border-slate-200 dark:border-white/5 dark:bg-slate-900/50"
+                              }`}
+                              disabled={!threadId}
+                              type="button"
+                            >
+                              <p className="text-sm font-bold text-slate-900 dark:text-white">{getRecordTitle(row)}</p>
+                              <p className="mt-1 text-xs text-slate-500">{getRecordSubtitle(row)}</p>
+                            </button>
+                          );
+                        })}
+                        {groupThreadRows.length === 0 && <EmptyState label="No group threads exist for this SCS login." />}
+                      </div>
+                    </Card>
+
+                    <Card>
+                      <CardHeader title="Group Thread Detail" subtitle="Read and send into a selected group thread." />
+                      <div className="space-y-4">
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:border-white/5 dark:bg-slate-900/50 dark:text-slate-300">
+                          Group: <span className="font-semibold text-slate-700 dark:text-slate-100">{selectedGroupThread ? getRecordTitle(selectedGroupThread) : "No group selected"}</span>
+                        </div>
+                        <input
+                          value={groupMessageForm.threadId}
+                          onChange={(event) => setGroupMessageForm((prev) => ({ ...prev, threadId: event.target.value.trim() }))}
+                          placeholder="Group thread ID for send action"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                        <textarea
+                          value={groupMessageForm.body}
+                          onChange={(event) => setGroupMessageForm((prev) => ({ ...prev, body: event.target.value }))}
+                          placeholder="Write a group message"
+                          rows={4}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                          />
+                        <input
+                          type="file"
+                          onChange={(event) => setMessageFile(event.target.files?.[0] ?? null)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                        />
+                        <div className="flex gap-3">
+                          <button
+                            onClick={async () => {
+                              if (!accessToken || !groupMessageForm.threadId || !groupMessageForm.body.trim()) {
+                                return;
+                              }
+                              setIsMutating(true);
+                              try {
+                                await sendGroupMessage(accessToken, groupMessageForm.threadId, groupMessageForm.body.trim());
+                                setGroupMessageForm((prev) => ({ ...prev, body: "" }));
+                                triggerToast("Group message sent through the backend.");
+                                await loadDashboard();
+                                await loadGroupThreadDetail(groupMessageForm.threadId);
+                              } catch (nextError) {
+                                triggerToast(getApiErrorMessage(nextError));
+                              } finally {
+                                setIsMutating(false);
+                              }
+                            }}
+                            disabled={!groupMessageForm.threadId || !groupMessageForm.body.trim() || isMutating}
+                            className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                            type="button"
+                          >
+                            Send group message
+                          </button>
+                          <button
+                            onClick={() => void loadGroupThreadDetail(groupMessageForm.threadId)}
+                            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 dark:border-white/10 dark:text-slate-200"
+                            type="button"
+                          >
+                            Reload group
+                          </button>
+                        </div>
+                        <JsonPreview data={groupThreadDetail} emptyLabel="No group thread detail has been loaded yet." />
+                      </div>
+                    </Card>
+                  </div>
+
+                  <Card>
+                    <CardHeader title="Draft Scan" subtitle="Live `/messaging/scan` result for the text below." />
+                    <textarea
+                      value={scanBody}
+                      onChange={(event) => setScanBody(event.target.value)}
+                      placeholder="Paste or draft a message to run it through the messaging scan endpoint."
+                      rows={4}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                    <div className="mt-4">
+                      <JsonPreview data={scanResult} emptyLabel="No scan has been run yet." />
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <CardHeader title="Message Trace" subtitle="Fetch a delivery trace from `/messaging/message/{message_id}/trace`." />
+                    <div className="flex flex-col gap-3 md:flex-row">
+                      <input
+                        value={messageTraceId}
+                        onChange={(event) => setMessageTraceId(event.target.value.trim())}
+                        placeholder="Message ID"
+                        className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!accessToken || !messageTraceId) {
+                            return;
+                          }
+                          setIsMutating(true);
+                          try {
+                            const trace = await getMessageTrace(accessToken, messageTraceId);
+                            setMessageTrace(trace);
+                            triggerToast("Message trace loaded from the backend.");
+                          } catch (nextError) {
+                            triggerToast(getApiErrorMessage(nextError));
+                          } finally {
+                            setIsMutating(false);
+                          }
+                        }}
+                        disabled={!messageTraceId || isMutating}
+                        className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        type="button"
+                      >
+                        Load trace
+                      </button>
+                    </div>
+                    <div className="mt-4">
+                      <JsonPreview data={messageTrace} emptyLabel="No message trace has been requested yet." />
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <CardHeader title="Attachment Download" subtitle="Download a message attachment by message ID." />
+                    <div className="flex flex-col gap-3 md:flex-row">
+                      <input
+                        value={attachmentMessageId}
+                        onChange={(event) => setAttachmentMessageId(event.target.value.trim())}
+                        placeholder="Message ID"
+                        className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-100"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!accessToken || !attachmentMessageId) {
+                            return;
+                          }
+                          setIsMutating(true);
+                          try {
+                            const file = await downloadMessageAttachment(accessToken, attachmentMessageId);
+                            const bytes = Uint8Array.from(atob(file.content_base64), (char) => char.charCodeAt(0));
+                            const blob = new Blob([bytes], { type: file.content_type });
+                            const url = URL.createObjectURL(blob);
+                            const anchor = document.createElement("a");
+                            anchor.href = url;
+                            anchor.download = file.file_name;
+                            anchor.click();
+                            URL.revokeObjectURL(url);
+                            triggerToast("Attachment downloaded from the backend.");
+                          } catch (nextError) {
+                            triggerToast(getApiErrorMessage(nextError));
+                          } finally {
+                            setIsMutating(false);
+                          }
+                        }}
+                        disabled={!attachmentMessageId || isMutating}
+                        className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        type="button"
+                      >
+                        Download
+                      </button>
+                    </div>
+                  </Card>
+                </div>
+              )}
+            </>
           )}
-
         </main>
       </div>
 
-      {viewingSummary && (
-        <RecordDetailDialog
-          open={viewingSummary}
-          onClose={() => setViewingSummary(false)}
-          title="Authorized Performance Summary"
-          subtitle="PT/IM approved · versioned · minimum-necessary · time-limited · named audiences"
-          fields={[
-            { label: "Airman", value: "J. Reyes" },
-            { label: "Access level", value: "Summary: Authorized access" },
-            { label: "Raw record", value: PRIVACY_STATES.RESTRICTED },
-            { label: "Confidence", value: "High (11 of last 14 days)" },
-            { label: "PT/IM visits (30d)", value: "2" },
-            { label: "Reconditioning", value: "Rehab Block 2 · ends 8 Aug" },
-            { label: "Functional limitation", value: "Lower-back, load-bearing (PT/IM-owned)" },
-          ]}
-        />
-      )}
-
-      {viewingAuditLog && (
-        <RecordDetailDialog
-          open={viewingAuditLog}
-          onClose={() => setViewingAuditLog(false)}
-          title="Compliance audit log"
-          subtitle="SCS access to Authorized Performance Summary records"
-          fields={[]}
-        >
-          <div className="divide-y divide-slate-100 dark:divide-white/5 border border-slate-100 dark:border-white/5 rounded-xl overflow-hidden font-mono text-[10px]">
-            {[
-              { who: "Capt Shah (SCS)", action: "Viewed Authorized Performance Summary — J. Reyes", when: "Today · 09:14" },
-              { who: "Capt Shah (SCS)", action: "Assigned Rehab Block 2", when: "22 Jul · 14:02" },
-              { who: "SCS lead", action: "Viewed Authorized Performance Summary — T. Cho", when: "21 Jul · 11:30" },
-              { who: "PT/IM (auto)", action: "Approved summary refresh — J. Reyes", when: "20 Jul · 07:45" },
-            ].map((entry, idx) => (
-              <div key={idx} className="px-3 py-2 flex items-center justify-between gap-3">
-                <span className="text-slate-700 dark:text-slate-300">
-                  <span className="font-bold text-slate-800 dark:text-white">{entry.who}</span> — {entry.action}
-                </span>
-                <span className="text-slate-400 flex-shrink-0">{entry.when}</span>
-              </div>
+      <AccessibleDialog open={showRecommendationModal} onClose={() => setShowRecommendationModal(false)} className="w-full max-w-2xl space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0e1628]">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Assign Recommendation</h2>
+          <p className="mt-1 text-xs text-slate-500">Creates a real recommendation assignment for the selected operator.</p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <select value={recommendationForm.userId} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, userId: event.target.value.trim() }))} className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            {operatorOptions.length === 0 && <option value="">No operators returned</option>}
+            {operatorOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name} • {option.subtitle}
+              </option>
             ))}
-          </div>
-        </RecordDetailDialog>
-      )}
+          </select>
+          <input value={recommendationForm.readinessComponent} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, readinessComponent: event.target.value }))} placeholder="Readiness component" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={recommendationForm.title} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Title" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={recommendationForm.followUpTimeline} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, followUpTimeline: event.target.value }))} placeholder="Follow-up timeline" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        </div>
+        <textarea value={recommendationForm.instructions} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, instructions: event.target.value }))} placeholder="Instructions" rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        <textarea value={recommendationForm.steps} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, steps: event.target.value }))} placeholder='JSON array, e.g. [{"title":"Step 1","description":"..."}]' rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono dark:border-white/10 dark:bg-slate-900" />
+        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <input type="checkbox" checked={recommendationForm.jointCoordination} onChange={(event) => setRecommendationForm((prev) => ({ ...prev, jointCoordination: event.target.checked }))} />
+          Joint coordination
+        </label>
+        <div className="flex gap-3">
+          <button onClick={() => setShowRecommendationModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken || !recommendationForm.userId || !recommendationForm.title.trim() || !recommendationForm.instructions.trim()) {
+                return;
+              }
+              setIsMutating(true);
+              try {
+                const steps = JSON.parse(recommendationForm.steps) as Array<{ title: string; description: string }>;
+                await assignRecommendation(accessToken, recommendationForm.userId, {
+                  readiness_component: recommendationForm.readinessComponent,
+                  assigned_provider_name: currentUser?.name ?? "SCS",
+                  assigned_provider_role: currentUser?.roleName ?? "SCS",
+                  title: recommendationForm.title.trim(),
+                  instructions: recommendationForm.instructions.trim(),
+                  steps,
+                  follow_up_timeline: recommendationForm.followUpTimeline,
+                  is_joint_coordination: recommendationForm.jointCoordination,
+                });
+                triggerToast("Recommendation assigned in the live backend.");
+                setShowRecommendationModal(false);
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={!recommendationForm.userId || !recommendationForm.title.trim() || !recommendationForm.instructions.trim() || isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
 
-      {viewingAllWorkouts && (
-        <RecordDetailDialog
-          open={viewingAllWorkouts}
-          onClose={() => setViewingAllWorkouts(false)}
-          title="All workouts"
-          subtitle="J. Reyes · trailing log"
-          fields={[]}
-        >
-          <div className="divide-y divide-slate-100 dark:divide-white/5 border border-slate-100 dark:border-white/5 rounded-xl overflow-hidden">
-            {WORKOUT_LOG.map((w, idx) => (
-              <div key={idx} className="flex items-center justify-between gap-3 px-3 py-2.5 text-left">
-                <span className="min-w-0">
-                  <span className="block text-xs font-bold text-slate-800 dark:text-white truncate">{w.type}</span>
-                  <span className="block text-[10px] text-slate-500 truncate">{w.date} · {w.plan} · {w.dur}</span>
-                </span>
-                <span className={`flex-shrink-0 text-[9px] font-bold uppercase ${
-                  w.col === "green" ? "text-emerald-500" : w.col === "orange" ? "text-amber-500" : "text-sky-500"
-                }`}>
-                  {w.status}
-                </span>
-              </div>
+      <AccessibleDialog open={showPlanModal} onClose={() => setShowPlanModal(false)} className="w-full max-w-2xl space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-[#0e1628]">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Upsert Reconditioning Plan</h2>
+          <p className="mt-1 text-xs text-slate-500">Writes directly to `/records/reconditioning-plan/{'{'}user_id{'}'}`.</p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <select value={planForm.userId} onChange={(event) => setPlanForm((prev) => ({ ...prev, userId: event.target.value.trim() }))} className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            {operatorOptions.length === 0 && <option value="">No operators returned</option>}
+            {operatorOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name} • {option.subtitle}
+              </option>
             ))}
-          </div>
-        </RecordDetailDialog>
-      )}
+          </select>
+          <input value={planForm.phase} onChange={(event) => setPlanForm((prev) => ({ ...prev, phase: event.target.value }))} placeholder="Phase" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={planForm.sessionsCompleted} onChange={(event) => setPlanForm((prev) => ({ ...prev, sessionsCompleted: event.target.value }))} placeholder="Sessions completed" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={planForm.sessionsTotal} onChange={(event) => setPlanForm((prev) => ({ ...prev, sessionsTotal: event.target.value }))} placeholder="Sessions total" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={planForm.cadenceNote} onChange={(event) => setPlanForm((prev) => ({ ...prev, cadenceNote: event.target.value }))} placeholder="Cadence note" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={planForm.ptimClearanceStatus} onChange={(event) => setPlanForm((prev) => ({ ...prev, ptimClearanceStatus: event.target.value }))} placeholder="PT/IM clearance status" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input type="date" value={planForm.nextReviewDate} onChange={(event) => setPlanForm((prev) => ({ ...prev, nextReviewDate: event.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={planForm.scsCoordinationStatus} onChange={(event) => setPlanForm((prev) => ({ ...prev, scsCoordinationStatus: event.target.value }))} placeholder="SCS coordination status" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={planForm.severityLevel} onChange={(event) => setPlanForm((prev) => ({ ...prev, severityLevel: event.target.value }))} placeholder="Severity level" className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input type="date" value={planForm.injuryReportedOn} onChange={(event) => setPlanForm((prev) => ({ ...prev, injuryReportedOn: event.target.value }))} className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        </div>
+        <textarea value={planForm.injuryFlags} onChange={(event) => setPlanForm((prev) => ({ ...prev, injuryFlags: event.target.value }))} placeholder="Injury flags, comma separated" rows={2} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        <textarea value={planForm.rehabStrategySummary} onChange={(event) => setPlanForm((prev) => ({ ...prev, rehabStrategySummary: event.target.value }))} placeholder="Rehab strategy summary" rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <input type="checkbox" checked={planForm.limitationFlag} onChange={(event) => setPlanForm((prev) => ({ ...prev, limitationFlag: event.target.checked }))} />
+          Limitation flag enabled
+        </label>
+        <div className="flex gap-3">
+          <button onClick={() => setShowPlanModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken || !planForm.userId || !planForm.phase.trim()) {
+                return;
+              }
+              setIsMutating(true);
+              try {
+                await upsertReconditioningPlan(accessToken, planForm.userId, {
+                  phase: planForm.phase.trim(),
+                  sessions_completed: Number(planForm.sessionsCompleted) || 0,
+                  sessions_total: Number(planForm.sessionsTotal) || 0,
+                  cadence_note: planForm.cadenceNote.trim(),
+                  injury_flags: planForm.injuryFlags.split(",").map((value) => value.trim()).filter(Boolean),
+                  ptim_clearance_status: planForm.ptimClearanceStatus.trim(),
+                  next_review_date: planForm.nextReviewDate,
+                  limitation_flag: planForm.limitationFlag,
+                  rehab_strategy_summary: planForm.rehabStrategySummary.trim(),
+                  scs_coordination_status: planForm.scsCoordinationStatus.trim(),
+                  severity_level: planForm.severityLevel.trim(),
+                  injury_reported_on: planForm.injuryReportedOn,
+                });
+                triggerToast("Reconditioning plan saved in the live backend.");
+                setShowPlanModal(false);
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={!planForm.userId || !planForm.phase.trim() || isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
 
-      {viewingPlanRefs && (
-        <RecordDetailDialog
-          open={viewingPlanRefs}
-          onClose={() => setViewingPlanRefs(false)}
-          title="Plan references"
-          subtitle="Reconditioning & performance planning guidelines"
-          fields={[
-            { label: "RTP", value: "SCS + PT/IM coordinate reconditioning, training load, and progression" },
-            { label: "RTD", value: "Requires source-authority + decision date + verification + reevaluation" },
-            { label: "SCS scope", value: "Does not edit restriction profiles or clinical clearings" },
-          ]}
-        />
-      )}
+      <AccessibleDialog open={showRestrictionModal} onClose={() => setShowRestrictionModal(false)}>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Add Restriction</h2>
+          <p className="mt-1 text-xs text-slate-500">Posts a new restriction for the selected operator.</p>
+        </div>
+        <div className="space-y-4">
+          <select value={restrictionForm.userId} onChange={(event) => setRestrictionForm((prev) => ({ ...prev, userId: event.target.value.trim() }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            {operatorOptions.length === 0 && <option value="">No operators returned</option>}
+            {operatorOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name} • {option.subtitle}
+              </option>
+            ))}
+          </select>
+          <input value={restrictionForm.requiredPhase} onChange={(event) => setRestrictionForm((prev) => ({ ...prev, requiredPhase: event.target.value }))} placeholder="Required phase" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <textarea value={restrictionForm.description} onChange={(event) => setRestrictionForm((prev) => ({ ...prev, description: event.target.value }))} placeholder="Restriction description" rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => setShowRestrictionModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken || !restrictionForm.userId || !restrictionForm.description.trim()) {
+                return;
+              }
+              setIsMutating(true);
+              try {
+                await addReconditioningRestriction(accessToken, restrictionForm.userId, {
+                  description: restrictionForm.description.trim(),
+                  required_phase: restrictionForm.requiredPhase.trim(),
+                });
+                triggerToast("Restriction added in the live backend.");
+                setShowRestrictionModal(false);
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={!restrictionForm.userId || !restrictionForm.description.trim() || isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
 
-      {viewingTemplate && (
-        <RecordDetailDialog
-          open={!!viewingTemplate}
-          onClose={() => setViewingTemplate(null)}
-          title={viewingTemplate.title}
-          subtitle={viewingTemplate.desc}
-          badge={
-            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 text-[8px] font-bold rounded-full uppercase tracking-wider inline-block">
-              {viewingTemplate.badge}
-            </span>
-          }
-          fields={[
-            { label: "Cadence", value: viewingTemplate.cad },
-            { label: "Window", value: viewingTemplate.win },
-            { label: "Owner", value: viewingTemplate.owner },
-          ]}
-          actions={
-            <>
-              <button
-                onClick={() => setViewingTemplate(null)}
-                type="button"
-                className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  setAssignPlan(viewingTemplate.title);
-                  setShowAssignPlanModal(true);
-                  triggerToast(`Selected plan template: ${viewingTemplate.title}`);
-                  setViewingTemplate(null);
-                }}
-                type="button"
-                className="flex-1 py-2 px-4 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Use template
-              </button>
-            </>
-          }
-        >
-          <p className="text-[10px] text-slate-500 font-mono leading-normal">{viewingTemplate.details}</p>
-        </RecordDetailDialog>
-      )}
+      <AccessibleDialog open={showCoverageModal} onClose={() => setShowCoverageModal(false)}>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Log Coverage</h2>
+          <p className="mt-1 text-xs text-slate-500">Writes a provider coverage log through the backend admin coverage endpoint.</p>
+        </div>
+        <div className="space-y-4">
+          <select value={coverageForm.providerId} onChange={(event) => setCoverageForm((prev) => ({ ...prev, providerId: event.target.value.trim() }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            {currentUser?.id && <option value={currentUser.id}>{currentUser.name} • {currentUser.roleName ?? "SCS"}</option>}
+            {operatorOptions.filter((option) => option.id !== currentUser?.id).map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name} • {option.subtitle}
+              </option>
+            ))}
+          </select>
+          <input value={coverageForm.role} onChange={(event) => setCoverageForm((prev) => ({ ...prev, role: event.target.value }))} placeholder="Role" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={coverageForm.hours} onChange={(event) => setCoverageForm((prev) => ({ ...prev, hours: event.target.value }))} placeholder="Hours" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input type="date" value={coverageForm.coverageDate} onChange={(event) => setCoverageForm((prev) => ({ ...prev, coverageDate: event.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+            <input type="checkbox" checked={coverageForm.weekendRsd} onChange={(event) => setCoverageForm((prev) => ({ ...prev, weekendRsd: event.target.checked }))} />
+            Weekend RSD coverage
+          </label>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => setShowCoverageModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken || !coverageForm.providerId || !coverageForm.role.trim()) {
+                return;
+              }
+              setIsMutating(true);
+              try {
+                await createCoverageLog(accessToken, {
+                  provider_id: coverageForm.providerId,
+                  role: coverageForm.role.trim(),
+                  hours: Number(coverageForm.hours) || 0,
+                  coverage_date: coverageForm.coverageDate,
+                  is_weekend_rsd: coverageForm.weekendRsd,
+                });
+                triggerToast("Coverage log saved in the live backend.");
+                setShowCoverageModal(false);
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={!coverageForm.providerId || !coverageForm.role.trim() || isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
 
-      {viewingAssignment && (
-        <RecordDetailDialog
-          open={!!viewingAssignment}
-          onClose={() => setViewingAssignment(null)}
-          title={viewingAssignment.plan}
-          subtitle={`${viewingAssignment.air} · ${viewingAssignment.airUnit}`}
-          fields={[
-            { label: "Status", value: viewingAssignment.status },
-            { label: "Window", value: viewingAssignment.win },
-            { label: "Owner", value: viewingAssignment.owner },
-            { label: "Compliance", value: viewingAssignment.comp },
-            { label: "Sign-off", value: viewingAssignment.sign },
-          ]}
-          actions={
-            <>
-              <button
-                onClick={() => setViewingAssignment(null)}
-                type="button"
-                className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  triggerToast(`Assignment updated for ${viewingAssignment.air}`);
-                  setViewingAssignment(null);
-                }}
-                type="button"
-                className="flex-1 py-2 px-4 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Save changes
-              </button>
-            </>
-          }
-        />
-      )}
+      <AccessibleDialog open={showGroupModal} onClose={() => setShowGroupModal(false)}>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Create Group Thread</h2>
+          <p className="mt-1 text-xs text-slate-500">Creates a real messaging group thread with participant user IDs.</p>
+        </div>
+        <div className="space-y-4">
+          <input value={groupForm.title} onChange={(event) => setGroupForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Group thread title" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <textarea value={groupForm.participantIds} onChange={(event) => setGroupForm((prev) => ({ ...prev, participantIds: event.target.value }))} placeholder="Participant user IDs, comma separated" rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => setShowGroupModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken || !groupForm.title.trim() || !groupForm.participantIds.trim()) {
+                return;
+              }
+              setIsMutating(true);
+              try {
+                await createGroupThread(accessToken, {
+                  title: groupForm.title.trim(),
+                  participant_ids: groupForm.participantIds.split(",").map((value) => value.trim()).filter(Boolean),
+                });
+                triggerToast("Group thread created in the live backend.");
+                setShowGroupModal(false);
+                setGroupForm({ title: "", participantIds: "" });
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={!groupForm.title.trim() || !groupForm.participantIds.trim() || isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
 
-      {viewingQueueItem && (
-        <RecordDetailDialog
-          open={!!viewingQueueItem}
-          onClose={() => setViewingQueueItem(null)}
-          title={viewingQueueItem.name}
-          subtitle={viewingQueueItem.details}
-          fields={[{ label: "Status", value: viewingQueueItem.status }]}
-          actions={
-            <>
-              <button
-                onClick={() => setViewingQueueItem(null)}
-                type="button"
-                className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  // Save changes: record edit and mutate the matched assignedPlans row
-                  const matched = assignedPlans.find((p) => p.air === viewingQueueItem.name);
-                  const editEntry: QueueItemEdit = {
-                    id: `qe-${Date.now()}`,
-                    queueItemId: matched?.id ?? `qi-${viewingQueueItem.name}`,
-                    airman: viewingQueueItem.name,
-                    fields: { status: viewingQueueItem.status, notes: viewingQueueItem.details },
-                    editedAt: new Date().toISOString(),
-                  };
-                  setQueueItemEdits((prev) => [editEntry, ...prev]);
-                  if (matched) {
-                    setAssignedPlans((prev) =>
-                      prev.map((p) =>
-                        p.id === matched.id ? { ...p, plan: viewingQueueItem.details } : p
-                      )
-                    );
-                  }
-                  triggerToast("Changes saved");
-                  setViewingQueueItem(null);
-                }}
-                type="button"
-                className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Save changes
-              </button>
-              <button
-                onClick={() => {
-                  // Update or insert the assignedPlans row with PENDING_REVIEW
-                  const matched = assignedPlans.find((p) => p.air === viewingQueueItem.name);
-                  if (matched) {
-                    setAssignedPlans((prev) =>
-                      prev.map((p) =>
-                        p.id === matched.id ? { ...p, status: PLAN_STATUSES.PENDING_REVIEW } : p
-                      )
-                    );
-                  } else {
-                    const newAssignment: AssignedPlanRow = {
-                      id: `ap-qi-${Date.now()}`,
-                      status: PLAN_STATUSES.PENDING_REVIEW,
-                      plan: viewingQueueItem.details,
-                      air: viewingQueueItem.name,
-                      airUnit: "",
-                      win: "TBD",
-                      owner: "SCS + PT/IM",
-                      comp: "0%",
-                      col: "orange",
-                      sign: "PT/IM",
-                      signBold: false,
-                    };
-                    setAssignedPlans((prev) => [newAssignment, ...prev]);
-                  }
-                  // Push sent-for-sign-off audit
-                  const sentEntry: SentForSignOff = {
-                    id: `so-${Date.now()}`,
-                    airman: viewingQueueItem.name,
-                    sentAt: new Date().toISOString(),
-                    by: "SCS",
-                  };
-                  setSentForSignOff((prev) => [sentEntry, ...prev]);
-                  triggerToast(`Sign-off request sent for ${viewingQueueItem.name}`);
-                  setViewingQueueItem(null);
-                }}
-                type="button"
-                className="flex-1 py-2 px-4 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-semibold transition cursor-pointer"
-              >
-                Send to PT/IM
-              </button>
-            </>
-          }
-        />
-      )}
+      <AccessibleDialog open={showPtSessionModal} onClose={() => setShowPtSessionModal(false)}>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Schedule PT Session</h2>
+          <p className="mt-1 text-xs text-slate-500">Creates a real PT session in the coverage workspace.</p>
+        </div>
+        <div className="space-y-4">
+          <input type="date" value={ptSessionForm.sessionDate} onChange={(event) => setPtSessionForm((prev) => ({ ...prev, sessionDate: event.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={ptSessionForm.startTime} onChange={(event) => setPtSessionForm((prev) => ({ ...prev, startTime: event.target.value }))} placeholder="0700" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input value={ptSessionForm.groupLabel} onChange={(event) => setPtSessionForm((prev) => ({ ...prev, groupLabel: event.target.value }))} placeholder="Group label" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <select value={ptSessionForm.focus} onChange={(event) => setPtSessionForm((prev) => ({ ...prev, focus: event.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            <option value="strength">strength</option>
+            <option value="conditioning">conditioning</option>
+            <option value="mobility">mobility</option>
+            <option value="recovery">recovery</option>
+            <option value="assessment">assessment</option>
+          </select>
+          <input value={ptSessionForm.capacity} onChange={(event) => setPtSessionForm((prev) => ({ ...prev, capacity: event.target.value }))} placeholder="Capacity" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <select value={ptSessionForm.leadProviderId} onChange={(event) => setPtSessionForm((prev) => ({ ...prev, leadProviderId: event.target.value.trim() }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            <option value="">No explicit lead provider</option>
+            {currentUser?.id && <option value={currentUser.id}>{currentUser.name} • {currentUser.roleName ?? "SCS"}</option>}
+          </select>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => setShowPtSessionModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken || !ptSessionForm.groupLabel.trim() || !ptSessionForm.startTime.trim()) return;
+              setIsMutating(true);
+              try {
+                await createPtSession(accessToken, {
+                  session_date: ptSessionForm.sessionDate,
+                  start_time: ptSessionForm.startTime.trim(),
+                  group_label: ptSessionForm.groupLabel.trim(),
+                  focus: ptSessionForm.focus,
+                  capacity: Number(ptSessionForm.capacity) || 0,
+                  lead_provider_id: ptSessionForm.leadProviderId || undefined,
+                });
+                triggerToast("PT session created in the live backend.");
+                setShowPtSessionModal(false);
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={!ptSessionForm.groupLabel.trim() || !ptSessionForm.startTime.trim() || isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
 
-      {/* TOAST */}
-      {showConfirmToast && (
-        <div className="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 z-50 animate-slide-up border border-slate-800 dark:border-white/5 font-sans">
-          <CheckCircle className="size-4 text-emerald-400" />
-          <span className="text-xs font-semibold">{toastMessage}</span>
+      <AccessibleDialog open={showLeaveModal} onClose={() => setShowLeaveModal(false)}>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Log Leave / TDY / Training</h2>
+          <p className="mt-1 text-xs text-slate-500">Creates a real provider leave record for the overlap tracker.</p>
+        </div>
+        <div className="space-y-4">
+          <select value={leaveForm.leaveType} onChange={(event) => setLeaveForm((prev) => ({ ...prev, leaveType: event.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            <option value="leave">leave</option>
+            <option value="tdy">tdy</option>
+            <option value="training">training</option>
+            <option value="medical">medical</option>
+          </select>
+          <input type="date" value={leaveForm.startDate} onChange={(event) => setLeaveForm((prev) => ({ ...prev, startDate: event.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <input type="date" value={leaveForm.endDate} onChange={(event) => setLeaveForm((prev) => ({ ...prev, endDate: event.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+          <select value={leaveForm.userId} onChange={(event) => setLeaveForm((prev) => ({ ...prev, userId: event.target.value.trim() }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+            <option value="">Current logged-in provider</option>
+            {currentUser?.id && <option value={currentUser.id}>{currentUser.name} • {currentUser.roleName ?? "SCS"}</option>}
+          </select>
+          <textarea value={leaveForm.note} onChange={(event) => setLeaveForm((prev) => ({ ...prev, note: event.target.value }))} placeholder="Note" rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => setShowLeaveModal(false)} className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold dark:border-white/10" type="button">Cancel</button>
+          <button
+            onClick={async () => {
+              if (!accessToken) return;
+              setIsMutating(true);
+              try {
+                await createLeaveRecord(accessToken, {
+                  leave_type: leaveForm.leaveType,
+                  start_date: leaveForm.startDate,
+                  end_date: leaveForm.endDate,
+                  note: leaveForm.note.trim() || undefined,
+                  user_id: leaveForm.userId || undefined,
+                });
+                triggerToast("Leave record created in the live backend.");
+                setShowLeaveModal(false);
+                await refreshAll();
+              } catch (nextError) {
+                triggerToast(getApiErrorMessage(nextError));
+              } finally {
+                setIsMutating(false);
+              }
+            }}
+            disabled={isMutating}
+            className="flex-1 rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+      </AccessibleDialog>
+
+      {showToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-white shadow-2xl">
+          <CheckCircle className="size-4 text-[var(--brand-color)]" />
+          <span className="text-xs font-medium">{toastMessage}</span>
         </div>
       )}
-
-      {/* Create-record modals (Phase 4 wiring) */}
-      <CreateRecordModal
-        open={showPlanModal}
-        onClose={() => setShowPlanModal(false)}
-        title="Add performance plan"
-        subtitle="Add a new recommendation to J. Reyes' plan stack."
-        submitLabel="Add plan"
-        fields={[
-          { name: "title", label: "Plan title", type: "text", required: true },
-          {
-            name: "discipline",
-            label: "Discipline",
-            type: "select",
-            required: true,
-            defaultValue: "Strength",
-            options: ["Strength", "Mobility", "Endurance", "Reconditioning"],
-          },
-          { name: "desc", label: "Description", type: "textarea", required: true },
-          { name: "owner", label: "Owner", type: "text", placeholder: "e.g. PT" },
-        ]}
-        onSubmit={(values) => {
-          const discipline = values.discipline || "Strength";
-          const badge = `${discipline} - Active`;
-          const cad = discipline === "Mobility" ? "Daily - 12 min" : discipline === "Endurance" ? "3x/wk - 45 min" : "3x/wk - 60 min";
-          const win = "28 days - 3 blocks";
-          setPerformancePlans((prev) => [
-            { title: values.title, badge, desc: values.desc, details: values.desc, cad, win, owner: values.owner || "SCS" },
-            ...prev,
-          ]);
-          triggerToast(`Created: ${values.title}`);
-          setShowPlanModal(false);
-        }}
-      />
-
-      <CreateRecordModal
-        open={showPerfNoteModal}
-        onClose={() => setShowPerfNoteModal(false)}
-        title="Add performance note"
-        subtitle="Log a quick observation against J. Reyes' active plan."
-        submitLabel="Add note"
-        fields={[
-          { name: "date", label: "Date", type: "date", required: true },
-          { name: "author", label: "Author", type: "text", placeholder: "e.g. SCS Reeves", required: true },
-          { name: "text", label: "Note", type: "textarea", required: true },
-        ]}
-        onSubmit={(values) => {
-          const entry: PerformanceNote = {
-            id: `pn-${Date.now()}`,
-            date: values.date,
-            text: values.text,
-            author: values.author,
-          };
-          setPerformanceNotes((prev) => [entry, ...prev]);
-          triggerToast(`Created: note by ${values.author}`);
-          setShowPerfNoteModal(false);
-        }}
-      />
-
-      <CreateRecordModal
-        open={showAssignPlanModal}
-        onClose={() => setShowAssignPlanModal(false)}
-        title="Assign new plan"
-        subtitle="Push a template to a single airman - routed through PT/IM sign-off."
-        submitLabel="Assign plan"
-        fields={[
-          { name: "plan", label: "Plan title", type: "text", required: true },
-          { name: "air", label: "Airman code", type: "text", placeholder: "e.g. A-1042", required: true },
-          { name: "airUnit", label: "Airman unit", type: "text", placeholder: "e.g. 4th FLT" },
-          { name: "owner", label: "Owner", type: "text", placeholder: "e.g. SCS" },
-        ]}
-        onSubmit={(values) => {
-          const entry: AssignedPlanRow = {
-            id: `ap-${Date.now()}`,
-            status: "Pending Review",
-            plan: values.plan,
-            air: values.air,
-            airUnit: values.airUnit || "",
-            win: "TBD",
-            owner: values.owner || "SCS",
-            comp: "0%",
-            col: "slate",
-            sign: "-",
-            signBold: false,
-          };
-          setAssignedPlans((prev) => [entry, ...prev]);
-          triggerToast(`Created: ${values.plan}`);
-          setShowAssignPlanModal(false);
-        }}
-      />
-
-      <CreateRecordModal
-        open={showRecondPlanModal}
-        onClose={() => setShowRecondPlanModal(false)}
-        title="Create reconditioning plan"
-        subtitle="Draft a new template and add it to the Templates gallery."
-        submitLabel="Create plan"
-        fields={[
-          { name: "title", label: "Plan title", type: "text", required: true },
-          {
-            name: "cad",
-            label: "Cadence",
-            type: "select",
-            required: true,
-            defaultValue: "Weekly",
-            options: ["Daily", "Weekly", "Bi-weekly", "Ad-hoc"],
-          },
-          { name: "desc", label: "Description", type: "textarea", required: true },
-          { name: "owner", label: "Owner", type: "text", placeholder: "e.g. SCS" },
-        ]}
-        onSubmit={(values) => {
-          const cadMap: Record<string, string> = {
-            Daily: "Daily - 30 min",
-            Weekly: "3x/wk - 45 min",
-            "Bi-weekly": "Every 2 weeks - 60 min",
-            "Ad-hoc": "As needed - 30 min",
-          };
-          const entry: ReconditioningPlan = {
-            id: `rp-${Date.now()}`,
-            title: values.title,
-            badge: "Reconditioning - Draft",
-            desc: values.desc,
-            cad: cadMap[values.cad] || values.cad,
-            win: "28 days - 3 blocks",
-            owner: values.owner || "SCS",
-          };
-          setReconditioningPlans((prev) => [entry, ...prev]);
-          triggerToast(`Created: ${values.title}`);
-          setShowRecondPlanModal(false);
-        }}
-      />
-
-      <CreateRecordModal
-        open={showNewDmModal}
-        onClose={() => setShowNewDmModal(false)}
-        title="New direct message"
-        subtitle="Open a thread with a new recipient - audit-logged on send."
-        submitLabel="Start thread"
-        fields={[
-          { name: "name", label: "Recipient name", type: "text", placeholder: "e.g. Capt Reyes", required: true },
-          { name: "code", label: "Recipient code", type: "text", placeholder: "e.g. A-1042" },
-          { name: "text", label: "First message", type: "textarea", required: true },
-        ]}
-        onSubmit={(values) => {
-          const initials = values.name
-            .split(/\s+/)
-            .map((p) => p[0])
-            .filter(Boolean)
-            .slice(0, 2)
-            .join("")
-            .toUpperCase() || "?";
-          const entry: DmThread = {
-            initials,
-            name: values.name,
-            time: "Just now",
-            txt: values.text,
-            unread: false,
-            active: true,
-          };
-          setDmThreads((prev) => [entry, ...prev]);
-          setSelectedChatId(values.name);
-          triggerToast(`Created: ${values.name}`);
-          setShowNewDmModal(false);
-        }}
-      />
-
     </div>
+  );
+}
+
+function SectionTitle({
+  kicker,
+  title,
+  description,
+  actions,
+}: {
+  kicker: string;
+  title: string;
+  description: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{kicker}</p>
+        <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">{title}</h1>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{description}</p>
+      </div>
+      {actions && <div className="flex flex-wrap gap-3">{actions}</div>}
+    </div>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  subtext,
+  accent,
+}: {
+  title: string;
+  value: string;
+  subtext: string;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#0e1628]">
+      <p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">{title}</p>
+      <p className={`mt-1 text-2xl font-black text-slate-900 dark:text-white ${accent ?? ""}`}>{value}</p>
+      <p className="mt-1 text-[10px] text-slate-400">{subtext}</p>
+    </div>
+  );
+}
+
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <div className={`rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-white/5 dark:bg-[#0e1628] ${className}`}>{children}</div>;
+}
+
+function CardHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="mb-4 border-b border-slate-100 pb-3 dark:border-white/5">
+      <h3 className="text-sm font-bold text-slate-900 dark:text-white">{title}</h3>
+      <p className="mt-1 text-[10px] text-slate-500">{subtitle}</p>
+    </div>
+  );
+}
+
+function SimpleKeyValueList({ rows }: { rows: Array<{ label: string; value: string }> }) {
+  return (
+    <div className="space-y-3 text-xs">
+      {rows.map((row) => (
+        <div key={row.label} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 dark:border-white/5 dark:bg-slate-900/50">
+          <span className="font-semibold text-slate-700 dark:text-slate-200">{row.label}</span>
+          <span className="font-mono text-right text-slate-500">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function JsonPreview({ data, emptyLabel }: { data: unknown; emptyLabel: string }) {
+  if (!data) {
+    return <EmptyState label={emptyLabel} />;
+  }
+
+  return (
+    <pre className="max-h-96 overflow-auto rounded-2xl border border-slate-100 bg-slate-50 p-4 text-[11px] text-slate-600 dark:border-white/5 dark:bg-slate-900/50 dark:text-slate-300">
+      {JSON.stringify(sanitizeDisplayData(data), null, 2)}
+    </pre>
+  );
+}
+
+function EmptyState({ label }: { label: string }) {
+  return <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs text-slate-400 dark:border-white/10 dark:bg-slate-900/40">{label}</div>;
+}
+
+function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="py-6 text-center text-slate-400">
+        {label}
+      </td>
+    </tr>
   );
 }
