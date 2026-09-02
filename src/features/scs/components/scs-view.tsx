@@ -12,6 +12,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { IconButton } from "@/components/ui/icon-button";
 import { RecordDetailDialog } from "@/components/ui/record-detail-dialog";
 import { CreateRecordModal } from "@/components/ui/create-record-modal";
+import { MockItemBadge } from "@/components/ui/mock-item-badge";
 import {
   POPULATION_LEVELS,
   PRIVACY_STATES,
@@ -182,14 +183,6 @@ function SectionMismatchNote({ note }: { note: string }) {
     <div className="rounded-xl border border-rose-500 bg-rose-100 px-4 py-3 text-[11px] font-semibold text-rose-700 shadow-sm dark:border-rose-400 dark:bg-rose-950/40 dark:text-rose-200">
       {note}
     </div>
-  );
-}
-
-function MockItemBadge({ label = "Mock data" }: { label?: string }) {
-  return (
-    <span className="rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-200">
-      {label}
-    </span>
   );
 }
 
