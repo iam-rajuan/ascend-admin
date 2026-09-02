@@ -1037,6 +1037,11 @@ export async function deleteLeaveRecord(accessToken: string, leaveId: string) {
   });
 }
 
+export async function getTodayPtSessions(accessToken: string) {
+  return request<{ sessions: Array<Record<string, unknown>> }>(accessToken, "/admin/pt-sessions/today");
+}
+
 export async function downloadMessageAttachment(accessToken: string, messageId: string) {
   return request<RecordFileDownloadResponse>(accessToken, `/messaging/message/${messageId}/attachment`);
 }
+

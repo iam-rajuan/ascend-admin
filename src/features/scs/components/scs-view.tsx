@@ -1,7 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { assignRecommendation, sendRecommendationForSignoff, upsertReconditioningPlan } from "@/lib/role-dashboards-api";
+import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
 import { AscendLogo } from "@/components/ascend-logo";
 import { useToast } from "@/hooks/use-toast";
@@ -109,6 +111,32 @@ const WORKOUT_LOG: WorkoutRecord[] = [
   { status: "Done", date: "18 Jul", type: "Strength · deadlift", dur: "45 min", rpe: "6", plan: "Rehab Block 2", lim: "Sub-80% 1RM", rev: "Reviewed", col: "green" },
 ];
 
+const PLAN_TEMPLATES: TemplateRecord[] = [
+  { title: "4-week reconditioning", badge: `Reconditioning · ${PLAN_STATUSES.ACTIVE}`, star: true, desc: "Lower back, post-OFT mobility focus · 12 sessions", details: "BLOCK 1 - WEEKS 1-2: Daily mobility reset - 12 min · Sub-60% 1RM deadlift x 3 · Mobility 3 x 4 sets · Loaded carry progression. BLOCK 2 - WEEKS 3-4: Tempo runs x 4 · Box squat progression · Mobility work - 8 min.", cad: "3x/wk · 45 min", win: "28 days · 3 blocks", owner: "SCS + PT/IM · Sign-off: Capt Shah" },
+  { title: "Cycle 4 performance", badge: "Performance · Active", star: false, desc: "Strength + endurance · 16 sessions", details: "3+5 back squat progression · 4x8 bench press · Tempo intervals: 4x 5 min · Mobility cooldown: 8 min.", cad: "4x/wk · 60 min", win: "28 days · 4 blocks", owner: "SCS · Plan design" },
+  { title: "Sleep reset - 7 day", badge: "Recovery · Draft", star: false, desc: "Anchor sleep + evening cell phone cutoff", details: "Lights-out anchor - 22:30 · Caffeine cutoff - 14:00 · Dim-evening - 21:00 · Morning light - 10 min.", cad: "Daily · ~10 min", win: "7 days · 1 block", owner: "SCS · Self-reported" },
+  { title: "Mobility reset - 12 min", badge: "Mobility · Active", star: false, desc: "Hip, T-spine, ankle · daily routine", details: "90/90 hip - 4 min · T-spine rotations - 3 min · Calf stretches - 35 s/side · Ankle/dorsi - 90 s/side.", cad: "Daily · 12 min", win: "14 days · Daily", owner: "SCS · Self-reported" },
+  { title: "OFT tempo prep", badge: "OFT prep · Active", star: false, desc: "High-intensity prep · 8 sessions", details: "400m repeats: 6x · Performance pace x 6 · Box jump complex · Sled push: 4x 30m.", cad: "2x/wk · 75 min", win: "28 days · Lane signoff", owner: "SCS + OFT lead · Lane signoff" },
+  { title: "PT/IM handoff packet", badge: "Handoff · Draft", star: false, desc: "Scoped medical record for PT/IM and IDMT recipients", details: "OFT clearance + reviews · Clearance status · Open session compliance · Coordination notes.", cad: "Per visit · Scoped", win: "14 days · IDMT share", owner: "SCS + PT/IM · IDMT share" },
+];
+
+const SEEDED_ASSIGNMENTS: AssignmentRecord[] = [
+  { status: PLAN_STATUSES.PENDING_REVIEW, plan: "Rehab Block 2 · Lower back focus", air: "J. Reyes", airUnit: "SrA · Alpha", win: "22 Jul - 8 Aug", owner: "SCS + PT/IM", comp: "71%", col: "orange", sign: "Capt Shah", signBold: true },
+  { status: PLAN_STATUSES.ACTIVE, plan: "Cycle 4 Performance · Strength", air: "T. Cho", airUnit: "SSgt · Alpha", win: "14 Jul - 10 Aug", owner: "SCS", comp: "88%", col: "green", sign: "SCS lead" },
+  { status: PLAN_STATUSES.DRAFT, plan: "Sleep Reset · Sleep focus", air: "D. Mendez", airUnit: "SSgt · Alpha", win: "30 Jul - 6 Aug", owner: "SCS", comp: "0%", col: "slate", sign: "—" },
+  { status: PLAN_STATUSES.PENDING_REVIEW, plan: "Reconditioning · Chest/T-block", air: "B. Ndiaye", airUnit: "A1C · Bravo", win: "1 Aug - 22 Aug", owner: "SCS + PT/IM", comp: "—", col: "orange", sign: "PT/IM lead" },
+  { status: PLAN_STATUSES.ACTIVE, plan: "OFT Tempo Prep · High intensity", air: "K. Patel", airUnit: "A1C · Charlie", win: "20 Jul - 12 Aug", owner: "SCS + OFT", comp: "52%", col: "green", sign: "OFT Lead" },
+];
+
+const SEEDED_QUEUE: QueueRecord[] = [
+  { name: "B. Ndiaye", status: PLAN_STATUSES.PENDING_REVIEW, details: "Reconditioning · 1 Aug - 22 Aug · SCS + Plan" },
+  { name: "D. Okafor", status: PLAN_STATUSES.PENDING_REVIEW, details: "Hip reconditioning · 30 Jul - 27 Aug · SCS + PT/IM" },
+];
+
+function getTemplateByTitle(title: string) {
+  return PLAN_TEMPLATES.find((template) => template.title === title) ?? PLAN_TEMPLATES[0];
+}
+
 // Shared matcher for the "Needs review / OFT / Reconditioning / L4+" queue filter
 // pills used on both the Dashboard tab queue and the People roster table.
 // "Needs review" = rows with an active concern driver (red/orange coloring),
@@ -149,10 +177,27 @@ function matchesAssignmentPill(pill: string, row: { status: string; plan: string
   }
 }
 
+function SectionMismatchNote({ note }: { note: string }) {
+  return (
+    <div className="rounded-xl border border-rose-500 bg-rose-100 px-4 py-3 text-[11px] font-semibold text-rose-700 shadow-sm dark:border-rose-400 dark:bg-rose-950/40 dark:text-rose-200">
+      {note}
+    </div>
+  );
+}
+
+function MockItemBadge({ label = "Mock data" }: { label?: string }) {
+  return (
+    <span className="rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-200">
+      {label}
+    </span>
+  );
+}
+
 export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   const router = useRouter();
-  const { isAuthenticated, logout } = useAuthStore();
+  const { isAuthenticated, logout, accessToken } = useAuthStore();
   const currentUser = useCurrentUser();
+  const plansFormRef = useRef<HTMLDivElement | null>(null);
   
   const { theme, mounted: hasMounted, toggleTheme } = useTheme();
   const { show: showConfirmToast, message: toastMessage, triggerToast } = useToast();
@@ -175,6 +220,17 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   const [showAssignPlanModal, setShowAssignPlanModal] = useState(false);
   const [showRecondPlanModal, setShowRecondPlanModal] = useState(false);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
+  const [recondPlanError, setRecondPlanError] = useState("");
+  const [recondPlanSuccess, setRecondPlanSuccess] = useState("");
+  const [isSavingRecondPlan, setIsSavingRecondPlan] = useState(false);
+  const [assignAirmanUserId, setAssignAirmanUserId] = useState("");
+  const [assignApiError, setAssignApiError] = useState("");
+  const [assignApiSuccess, setAssignApiSuccess] = useState("");
+  const [isAssigningPlan, setIsAssigningPlan] = useState(false);
+  const [queueRecommendationId, setQueueRecommendationId] = useState("");
+  const [queueReviewError, setQueueReviewError] = useState("");
+  const [queueReviewSuccess, setQueueReviewSuccess] = useState("");
+  const [isSendingQueueReview, setIsSendingQueueReview] = useState(false);
 
   type PerformancePlan = { title: string; badge: string; desc: string; details: string; cad: string; win: string; owner: string };
   const [performancePlans, setPerformancePlans] = useState<PerformancePlan[]>([]);
@@ -272,29 +328,84 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
     triggerToast("Message sent and audit-logged");
   };
 
-  const handleAssignPlanSubmit = (e: React.FormEvent) => {
+  const focusPlanForm = () => {
+    setPlansView("Templates");
+    window.setTimeout(() => {
+      plansFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  };
+
+  const selectTemplateForAssignment = (template: TemplateRecord) => {
+    setAssignPlan(template.title);
+    setAssignWindow(template.win);
+    setAssignCoOwner(template.owner.split(" · ")[0]);
+    setAssignApiError("");
+    setAssignApiSuccess("");
+    focusPlanForm();
+    triggerToast(`Selected plan template: ${template.title}`);
+  };
+
+  const handleAssignPlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Push to existing assignedPlans (Phase 4) with PENDING_REVIEW status
-    const newAssignment: AssignedPlanRow = {
-      id: `ap-form-${Date.now()}`,
-      status: PLAN_STATUSES.PENDING_REVIEW,
-      plan: assignPlan,
-      air: assignAirman,
-      airUnit: "",
-      win: assignWindow,
-      owner: assignCoOwner,
-      comp: "0%",
-      col: "orange",
-      sign: "PT/IM",
-      signBold: false,
-    };
-    setAssignedPlans((prev) => [newAssignment, ...prev]);
-    triggerToast(`Plan "${assignPlan}" assigned successfully to ${assignAirman}`);
-    // Clear form
-    setAssignAirman("J. Reyes");
-    setAssignPlan("Rehab Block 2");
-    setAssignWindow("28 Jul - 25 Aug");
-    setAssignCoOwner("SCS + PT/IM");
+    if (!accessToken) {
+      setAssignApiError("You are signed out. Please sign in again.");
+      return;
+    }
+
+    if (!assignAirmanUserId.trim()) {
+      setAssignApiError("Backend user ID is required for Push to airman.");
+      return;
+    }
+
+    const template = getTemplateByTitle(assignPlan);
+    const detailsSteps = template.details
+      .split("·")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 5)
+      .map((item, index) => ({
+        title: `Step ${index + 1}`,
+        description: item,
+      }));
+
+    setIsAssigningPlan(true);
+    setAssignApiError("");
+    setAssignApiSuccess("");
+
+    try {
+      await assignRecommendation(accessToken, assignAirmanUserId.trim(), {
+        readiness_component: "physical",
+        assigned_provider_name: currentUser?.name || "SCS User",
+        assigned_provider_role: "SCS",
+        title: template.title,
+        instructions: template.desc,
+        steps: detailsSteps.length > 0 ? detailsSteps : [{ title: "Step 1", description: template.details }],
+        follow_up_timeline: assignWindow,
+        is_joint_coordination: assignCoOwner.toLowerCase().includes("pt/im") || assignCoOwner.includes("+"),
+      });
+
+      const newAssignment: AssignedPlanRow = {
+        id: `ap-form-${Date.now()}`,
+        status: PLAN_STATUSES.PENDING_REVIEW,
+        plan: `${template.title} · ${template.desc.split(" · ")[0]}`,
+        air: assignAirman,
+        airUnit: assignAirman.includes("J. Reyes") ? "SrA · Alpha flight" : assignAirman.includes("T. Cho") ? "A1C · Alpha flight" : "SSgt · Bravo flight",
+        win: assignWindow,
+        owner: assignCoOwner,
+        comp: "0%",
+        col: "orange",
+        sign: "PT/IM",
+        signBold: false,
+      };
+      setAssignedPlans((prev) => [newAssignment, ...prev]);
+      setAssignApiSuccess(`Assigned "${template.title}" to ${assignAirman}.`);
+      triggerToast(`Plan "${template.title}" assigned to ${assignAirman}`);
+      setPlansView("Active");
+    } catch (error) {
+      setAssignApiError(getApiErrorMessage(error));
+    } finally {
+      setIsAssigningPlan(false);
+    }
   };
 
   const handleSaveAssignmentDraft = () => {
@@ -309,6 +420,89 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
     };
     setAssignmentDrafts((prev) => [draft, ...prev]);
     triggerToast("Plan assignment saved as draft");
+  };
+
+  const handleQueueSendForSignoff = async () => {
+    if (!accessToken) {
+      setQueueReviewError("You are signed out. Please sign in again.");
+      return;
+    }
+
+    if (!queueRecommendationId.trim()) {
+      setQueueReviewError("Recommendation ID is required for send-for-signoff.");
+      return;
+    }
+
+    setIsSendingQueueReview(true);
+    setQueueReviewError("");
+    setQueueReviewSuccess("");
+
+    try {
+      await sendRecommendationForSignoff(accessToken, queueRecommendationId.trim());
+      setQueueReviewSuccess("Recommendation sent for sign-off.");
+      triggerToast("Recommendation sent for sign-off");
+    } catch (error) {
+      setQueueReviewError(getApiErrorMessage(error));
+    } finally {
+      setIsSendingQueueReview(false);
+    }
+  };
+
+  const handleReconditioningPlanSubmit = async (values: Record<string, string>) => {
+    if (!accessToken) {
+      setRecondPlanError("You are signed out. Please sign in again.");
+      return;
+    }
+
+    const userId = values.user_id.trim();
+    if (!userId) {
+      setRecondPlanError("Target user ID is required.");
+      return;
+    }
+
+    setIsSavingRecondPlan(true);
+    setRecondPlanError("");
+    setRecondPlanSuccess("");
+
+    try {
+      await upsertReconditioningPlan(accessToken, userId, {
+        phase: values.phase.trim(),
+        sessions_completed: Number(values.sessions_completed),
+        sessions_total: Number(values.sessions_total),
+        cadence_note: values.cadence_note.trim(),
+        injury_flags: values.injury_flags
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        ptim_clearance_status: values.ptim_clearance_status.trim(),
+        next_review_date: values.next_review_date,
+        limitation_flag: values.limitation_flag === "true",
+        rehab_strategy_summary: values.rehab_strategy_summary.trim(),
+        scs_coordination_status: values.scs_coordination_status.trim(),
+        severity_level: values.severity_level.trim(),
+        injury_reported_on: values.injury_reported_on,
+      });
+
+      setReconditioningPlans((prev) => [
+        {
+          id: `recond-${userId}-${Date.now()}`,
+          title: values.phase === "active" ? "Reconditioning plan" : `${values.phase} reconditioning plan`,
+          badge: `Reconditioning · ${values.phase}`,
+          desc: values.rehab_strategy_summary.trim(),
+          cad: values.cadence_note.trim(),
+          win: values.next_review_date,
+          owner: currentUser?.name || "SCS",
+        },
+        ...prev,
+      ]);
+      setRecondPlanSuccess(`Reconditioning plan saved for ${userId}.`);
+      triggerToast(`Reconditioning plan saved for ${userId}`);
+      setShowRecondPlanModal(false);
+    } catch (error) {
+      setRecondPlanError(getApiErrorMessage(error));
+    } finally {
+      setIsSavingRecondPlan(false);
+    }
   };
 
   const setActiveTab = (tab: TabType) => {
@@ -1068,7 +1262,10 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* ACTIONABLE WORK QUEUE — priority items first, clickable, opens filtered records (Req 3) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Work Queue &middot; requires your action</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Work Queue &middot; requires your action</h3>
+                    <MockItemBadge />
+                  </div>
                   <span className="text-[9px] text-slate-500 font-mono">{POPULATION_LEVELS.CASELOAD}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1082,7 +1279,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                     <button
                       key={i}
                       onClick={() => { setActiveTab(card.tab); triggerToast(`Opening ${card.name.toLowerCase()} queue`); }}
-                      className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/15 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
+                      className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 hover:border-rose-400 dark:hover:border-rose-400/60 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
                     >
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
                       <div className="flex items-baseline gap-2">
@@ -1102,7 +1299,10 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
 
               {/* Flight snapshot — analytics, secondary to the work queue above */}
               <div className="space-y-3">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot &middot; analytics</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot &middot; analytics</span>
+                  <MockItemBadge label="Partial mock" />
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                   {[
                     { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
@@ -1110,7 +1310,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                     { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
                     { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
                   ].map((card, i) => (
-                    <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                    <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
                       <div className="flex items-baseline gap-2">
                         <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
@@ -1175,10 +1375,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 
                 {/* Timeline agenda */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                  <div>
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
                     <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono">Today &middot; 28 Jul</span>
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white">Agenda Timeline</h3>
+                    </div>
+                    <MockItemBadge />
                   </div>
 
                   <div className="relative border-l border-slate-100 dark:border-white/5 pl-6 ml-2 space-y-6 text-xs font-sans">
@@ -1283,8 +1486,11 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
                   { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                      <MockItemBadge />
+                    </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
                       <span className={`text-[10px] font-bold ${
@@ -1318,12 +1524,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 <div className="lg:col-span-8 space-y-6">
                   
                   {/* Queue table card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                        <p className="text-[10px] text-slate-500 font-mono">Sorted by severity then confidence</p>
+                        <MockItemBadge />
                       </div>
+                      <p className="text-[10px] text-slate-500 font-mono">Sorted by severity then confidence</p>
 
                       <div className="flex gap-2">
                         {["Needs review", "OFT", "Reconditioning", "L4+"].map((fPill, idx) => (
@@ -1392,9 +1599,9 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                                 </span>
                               </td>
                               <td className="py-2.5 text-right">
-                                <button
+                              <button
                                   onClick={() => { setReviewingAirmanId(row.code); triggerToast(`Opened chart view context: ${row.code}`); }}
-                                  className="px-3 py-1 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
                                 >
                                   Open
                                 </button>
@@ -1414,11 +1621,12 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </div>
 
                   {/* Driver breakdown widget */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                    <div>
+                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                    <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">Driver Breakdown</h3>
-                      <p className="text-[9px] text-slate-500 font-mono">Cohort &middot; last 7 days</p>
+                      <MockItemBadge />
                     </div>
+                    <p className="text-[9px] text-slate-500 font-mono">Cohort &middot; last 7 days</p>
 
                     <div className="space-y-4 font-sans text-xs">
                       {[
@@ -1447,15 +1655,18 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 <div className="lg:col-span-4 space-y-6">
                   
                   {/* Line Chart card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4 text-left">
+                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4 text-left">
                     <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/5 pb-2">
                       <div>
                         <h3 className="text-xs font-bold text-slate-900 dark:text-white">Flight readiness &middot; 14 days</h3>
                         <p className="text-[9px] text-slate-500">Cohort: S-3 &middot; Tue 15 Jul &ndash; Mon 28 Jul</p>
                       </div>
-                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase tracking-wider font-mono">
-                        k&ge;5
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase tracking-wider font-mono">
+                          k&ge;5
+                        </span>
+                        <MockItemBadge />
+                      </div>
                     </div>
 
                     <div className="space-y-1">
@@ -1828,8 +2039,11 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   { name: "L4+ flagged", count: "3", desc: "Review before 11:00", icon: "red" },
                   { name: "Reconditioning", count: "5", desc: "2 awaiting review", icon: "slate" }
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                      <MockItemBadge />
+                    </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
                       <span className={`text-[10px] font-bold ${
@@ -1846,13 +2060,14 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               </div>
 
               {/* People Table */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
-                  <div>
+                  <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                    <p className="text-[10px] text-slate-500">Sorted by severity then confidence</p>
+                    <MockItemBadge />
                   </div>
+                  <p className="text-[10px] text-slate-500">Sorted by severity then confidence</p>
 
                   <div className="flex gap-2">
                     {["Needs review", "OFT", "Reconditioning", "L4+", "All 112"].map((fPill, idx) => (
@@ -1934,7 +2149,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                                 setReviewingAirmanId(row.code);
                                 triggerToast(`Opening roster file context for ${row.code}`);
                               }}
-                              className="px-3.5 py-1.5 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
                             >
                               Open
                             </button>
@@ -2002,7 +2217,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </div>
                   <button
                     onClick={() => setShowRecondPlanModal(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
                   >
                     + New plan
                   </button>
@@ -2012,14 +2227,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* 6 Plan Template Cards Grid */}
               {plansView === "Templates" && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs text-left font-sans">
-                {[
-                  { title: "4-week reconditioning", badge: `Reconditioning · ${PLAN_STATUSES.ACTIVE}`, star: true, desc: "Lower back, post-OFT mobility focus · 12 sessions", details: "BLOCK 1 - WEEKS 1-2: Daily mobility reset - 12 min · Sub-60% 1RM deadlift x 3 · Mobility 3 x 4 sets · Loaded carry progression. BLOCK 2 - WEEKS 3-4: Tempo runs x 4 · Box squat progression · Mobility work - 8 min.", cad: "3x/wk · 45 min", win: "28 days · 3 blocks", owner: "SCS + PT/IM · Sign-off: Capt Shah" },
-                  { title: "Cycle 4 performance", badge: "Performance · Active", star: false, desc: "Strength + endurance · 16 sessions", details: "3+5 back squat progression · 4x8 bench press · Tempo intervals: 4x 5 min · Mobility cooldown: 8 min.", cad: "4x/wk · 60 min", win: "28 days · 4 blocks", owner: "SCS · Plan design" },
-                  { title: "Sleep reset - 7 day", badge: "Recovery · Draft", star: false, desc: "Anchor sleep + evening cell phone cutoff", details: "Lights-out anchor - 22:30 · Caffeine cutoff - 14:00 · Dim-evening - 21:00 · Morning light - 10 min.", cad: "Daily · ~10 min", win: "7 days · 1 block", owner: "SCS · Self-reported" },
-                  { title: "Mobility reset - 12 min", badge: "Mobility · Active", star: false, desc: "Hip, T-spine, ankle · daily routine", details: "90/90 hip - 4 min · T-spine rotations - 3 min · Calf stretches - 35 s/side · Ankle/dorsi - 90 s/side.", cad: "Daily · 12 min", win: "14 days · Daily", owner: "SCS · Self-reported" },
-                  { title: "OFT tempo prep", badge: "OFT prep · Active", star: false, desc: "High-intensity prep · 8 sessions", details: "400m repeats: 6x · Performance pace x 6 · Box jump complex · Sled push: 4x 30m.", cad: "2x/wk · 75 min", win: "28 days · Lane signoff", owner: "SCS + OFT lead · Lane signoff" },
-                  { title: "PT/IM handoff packet", badge: "Handoff · Draft", star: false, desc: "Scoped medical record for PT/IM and IDMT recipients", details: "OFT clearance + reviews · Clearance status · Open session compliance · Coordination notes.", cad: "Per visit · Scoped", win: "14 days · IDMT share", owner: "SCS + PT/IM · IDMT share" }
-                ].map((tpl, i) => (
+                {PLAN_TEMPLATES.map((tpl, i) => (
                   <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -2053,18 +2261,15 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                     <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-white/5">
                       <button
                         onClick={() => {
-                          // Pre-fill the assign-plan form with the template's title and open the assign modal
-                          setAssignPlan(tpl.title);
-                          setShowAssignPlanModal(true);
-                          triggerToast(`Selected plan template: ${tpl.title}`);
+                          selectTemplateForAssignment(tpl);
                         }}
-                        className="py-1.5 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white text-[10px] font-bold rounded-lg transition cursor-pointer"
+                        className="py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-lg transition cursor-pointer"
                       >
                         Use template
                       </button>
                       <button
                         onClick={() => setViewingTemplate(tpl)}
-                        className="py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 text-[10px] font-bold rounded-lg text-slate-700 dark:text-slate-300 transition"
+                        className="py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-[10px] font-bold rounded-lg text-rose-700 dark:text-rose-200 transition"
                       >
                         Preview
                       </button>
@@ -2116,13 +2321,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { status: PLAN_STATUSES.PENDING_REVIEW, plan: "Rehab Block 2 · Lower back focus", air: "J. Reyes", airUnit: "SrA · Alpha", win: "22 Jul - 8 Aug", owner: "SCS + PT/IM", comp: "71%", col: "orange", sign: "Capt Shah", signBold: true },
-                        { status: PLAN_STATUSES.ACTIVE, plan: "Cycle 4 Performance · Strength", air: "T. Cho", airUnit: "SSgt · Alpha", win: "14 Jul - 10 Aug", owner: "SCS", comp: "88%", col: "green", sign: "SCS lead" },
-                        { status: PLAN_STATUSES.DRAFT, plan: "Sleep Reset · Sleep focus", air: "D. Mendez", airUnit: "SSgt · Alpha", win: "30 Jul - 6 Aug", owner: "SCS", comp: "0%", col: "slate", sign: "\u2014" },
-                        { status: PLAN_STATUSES.PENDING_REVIEW, plan: "Reconditioning · Chest/T-block", air: "B. Ndiaye", airUnit: "A1C · Bravo", win: "1 Aug - 22 Aug", owner: "SCS + PT/IM", comp: "\u2014", col: "orange", sign: "PT/IM lead" },
-                        { status: PLAN_STATUSES.ACTIVE, plan: "OFT Tempo Prep · High intensity", air: "K. Patel", airUnit: "A1C · Charlie", win: "20 Jul - 12 Aug", owner: "SCS + OFT", comp: "52%", col: "green", sign: "OFT Lead" }
-                      ].filter((row) => matchesAssignmentPill(assignmentsFilter, row)).map((row, idx) => (
+                      {[...assignedPlans, ...SEEDED_ASSIGNMENTS].filter((row) => matchesAssignmentPill(assignmentsFilter, row)).map((row, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/20 transition">
                           <td className="py-2.5">
                             <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
@@ -2156,7 +2355,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                           <td className="py-2.5 text-right">
                             <button
                               onClick={() => setViewingAssignment(row)}
-                              className="px-3 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition cursor-pointer"
+                              className="px-3 py-1 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 rounded-lg text-xs font-bold text-rose-700 dark:text-rose-200 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition cursor-pointer"
                             >
                               Edit
                             </button>
@@ -2255,7 +2454,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               </div>
 
               {/* Assign Plan Form split queue */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+              <div ref={plansFormRef} className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 
                 {/* Form */}
                 <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
@@ -2284,6 +2483,18 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                           <option value="D. Mendez">D. Mendez (SSgt · Bravo flight)</option>
                           <option value="T. Cho">T. Cho (A1C · Alpha flight)</option>
                         </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label htmlFor="scs-assign-airman-userid" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Backend user ID</label>
+                        <input
+                          id="scs-assign-airman-userid"
+                          type="text"
+                          value={assignAirmanUserId}
+                          onChange={(e) => setAssignAirmanUserId(e.target.value)}
+                          placeholder="Required for live API submit"
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white font-mono"
+                        />
                       </div>
 
                       <div className="space-y-1">
@@ -2327,17 +2538,19 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       <button
                         type="button"
                         onClick={handleSaveAssignmentDraft}
-                        className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 transition cursor-pointer"
+                        className="px-4 py-2 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 rounded-xl font-bold text-rose-700 dark:text-rose-200 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition cursor-pointer"
                       >
                         Save draft
                       </button>
                       <button 
                         type="submit" 
-                        className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl font-bold transition cursor-pointer"
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold transition cursor-pointer"
                       >
-                        Push to airman
+                        {isAssigningPlan ? "Pushing..." : "Push to airman"}
                       </button>
                     </div>
+                    {assignApiError ? <p className="text-[11px] font-semibold text-rose-600">{assignApiError}</p> : null}
+                    {assignApiSuccess ? <p className="text-[11px] font-semibold text-emerald-600">{assignApiSuccess}</p> : null}
                   </form>
                 </div>
 
@@ -2349,10 +2562,11 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </div>
 
                   <div className="space-y-3">
-                    {[
-                      { name: "B. Ndiaye", status: PLAN_STATUSES.PENDING_REVIEW, details: "Reconditioning · 1 Aug - 22 Aug · SCS + Plan" },
-                      { name: "D. Okafor", status: PLAN_STATUSES.PENDING_REVIEW, details: "Hip reconditioning · 30 Jul - 27 Aug · SCS + PT/IM" }
-                    ].map((queItem, idx) => (
+                    {[...assignedPlans.filter((row) => row.status === PLAN_STATUSES.PENDING_REVIEW).map((row) => ({
+                      name: row.air,
+                      status: row.status,
+                      details: `${row.plan.split(" · ")[0]} · ${row.win} · ${row.owner}`,
+                    })), ...SEEDED_QUEUE].map((queItem, idx) => (
                       <div key={idx} className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 rounded-xl space-y-1.5 text-left">
                         <div className="flex items-center justify-between">
                           <span className="font-extrabold text-slate-800 dark:text-white">{queItem.name}</span>
@@ -2363,7 +2577,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                         <p className="text-[10px] text-slate-500 leading-normal">{queItem.details}</p>
                         <button
                           onClick={() => setViewingQueueItem(queItem)}
-                          className="w-full text-center py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 text-[10px] font-bold text-slate-700 dark:text-slate-300 rounded-lg transition"
+                          className="w-full text-center py-1 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-[10px] font-bold text-rose-700 dark:text-rose-200 rounded-lg transition"
                         >
                           Review
                         </button>
@@ -2425,8 +2639,11 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   { name: "Reconditioning load", count: "5", desc: "2 awaiting review", icon: "slate" },
                   { name: "Leave overlap", count: "1", desc: "27 Jul - 29 Jul", icon: "orange" }
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                      <MockItemBadge />
+                    </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
                       <span className={`text-[10px] font-bold ${
@@ -2443,12 +2660,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               </div>
 
               {/* Workload by Flight */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                  <div>
+                  <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">Workload by flight</h3>
-                    <p className="text-[10px] text-slate-500">PT sessions, OFT lanes, reconditioning count &middot; week of 27 Jul</p>
+                    <MockItemBadge />
                   </div>
+                  <p className="text-[10px] text-slate-500">PT sessions, OFT lanes, reconditioning count &middot; week of 27 Jul</p>
                   <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase">
                     k&ge;5
                   </span>
@@ -2499,12 +2717,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               </div>
 
               {/* SCS Availability Matrix */}
-              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-2.5">
-                  <div>
+                  <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">SCS availability &middot; this week</h3>
-                    <p className="text-[10px] text-slate-500">Capacity 0-5 &middot; higher = busier</p>
+                    <MockItemBadge />
                   </div>
+                  <p className="text-[10px] text-slate-500">Capacity 0-5 &middot; higher = busier</p>
                   <div className="flex gap-2 text-[9px] font-bold text-slate-500 items-center select-none font-mono">
                     <span className="px-1 py-0.2 bg-slate-100 dark:bg-slate-800 rounded">0</span>
                     <span className="px-1 py-0.2 bg-emerald-100 text-emerald-700 rounded">1</span>
@@ -2676,11 +2895,12 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-left font-sans items-stretch">
                 
                 {/* Leave Overlap */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
-                  <div>
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white">Leave overlap - next 30 days</h3>
-                    <p className="text-[9px] text-slate-500">SCS, PT/IM, OFT staff</p>
+                    <MockItemBadge />
                   </div>
+                  <p className="text-[9px] text-slate-500">SCS, PT/IM, OFT staff</p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
                     <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
@@ -2704,12 +2924,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
 
                 {/* Hours Coverage stats */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
-                    <div className="text-left">
+                    <div className="text-left flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked</p>
+                      <MockItemBadge />
                     </div>
+                    <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked</p>
                     <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
                       95% target
                     </span>
@@ -2745,12 +2966,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
                 
                 {/* RSD coverage */}
-                <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+                <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <div>
+                    <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">RSD coverage (separate)</h3>
-                      <p className="text-[9px] text-slate-500">Restricted-status duty sessions tracked separately</p>
+                      <MockItemBadge />
                     </div>
+                    <p className="text-[9px] text-slate-500">Restricted-status duty sessions tracked separately</p>
                     <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded font-mono">
                       36 / 20
                     </span>
@@ -2810,7 +3032,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </span>
                   <button
                     onClick={() => setShowNewDmModal(true)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
                   >
                     + New message
                   </button>
@@ -2821,9 +3043,12 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start text-left font-sans text-xs">
                 
                 {/* Left Side: Inbox search list */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
+                      <MockItemBadge />
+                    </div>
                     <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-600 text-[8.5px] font-bold rounded-full uppercase tracking-wider font-mono">
                       7 unread
                     </span>
@@ -2884,7 +3109,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
 
                 {/* Right Side: Active Chat dialog thread */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
                   
                   {/* Chat Header */}
                   <div className="p-4 border-b border-slate-100 dark:border-white/5 bg-[#f8fafc] dark:bg-slate-900/60 flex items-center justify-between">
@@ -2903,7 +3128,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                     {selectedChatId === "J. Reyes" && (
                       <button 
                         onClick={() => { setReviewingAirmanId("J. Reyes"); triggerToast("Opening full profile for J. Reyes"); }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 text-[10px] font-bold rounded-lg text-slate-700 dark:text-slate-300 transition cursor-pointer"
+                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-[10px] font-bold rounded-lg text-rose-700 dark:text-rose-200 transition cursor-pointer"
                       >
                         View profile
                       </button>
@@ -2954,7 +3179,7 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       />
                       <button 
                         onClick={handleSendMessage}
-                        className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color-hover)] text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
                       >
                         Send
                       </button>
@@ -2974,7 +3199,235 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
             </div>
           )}
 
-        
+          <CreateRecordModal
+            open={showRecondPlanModal}
+            onClose={() => {
+              setShowRecondPlanModal(false);
+              setRecondPlanError("");
+              setRecondPlanSuccess("");
+            }}
+            title="Create reconditioning plan"
+            subtitle="Live SCS API: PUT /records/reconditioning-plan/:userId"
+            submitLabel={isSavingRecondPlan ? "Saving..." : "Save plan"}
+            onSubmit={(values) => {
+              void handleReconditioningPlanSubmit(values);
+            }}
+            fields={[
+              {
+                name: "user_id",
+                label: "Target user ID",
+                required: true,
+                placeholder: "Paste the backend user ID",
+              },
+              {
+                name: "phase",
+                label: "Phase",
+                type: "select",
+                required: true,
+                defaultValue: "active",
+                options: ["active", "draft", "completed"],
+              },
+              {
+                name: "sessions_completed",
+                label: "Sessions completed",
+                required: true,
+                defaultValue: "2",
+              },
+              {
+                name: "sessions_total",
+                label: "Sessions total",
+                required: true,
+                defaultValue: "12",
+              },
+              {
+                name: "cadence_note",
+                label: "Cadence note",
+                required: true,
+                defaultValue: "2x/week",
+              },
+              {
+                name: "injury_flags",
+                label: "Injury flags",
+                required: true,
+                defaultValue: "knee",
+                placeholder: "Comma-separated values",
+              },
+              {
+                name: "ptim_clearance_status",
+                label: "PT/IM clearance status",
+                type: "select",
+                required: true,
+                defaultValue: "modified_duty",
+                options: ["modified_duty", "cleared", "restricted", "pending"],
+              },
+              {
+                name: "next_review_date",
+                label: "Next review date",
+                type: "date",
+                required: true,
+                defaultValue: "2026-09-01",
+              },
+              {
+                name: "limitation_flag",
+                label: "Limitation flag",
+                type: "select",
+                required: true,
+                defaultValue: "true",
+                options: ["true", "false"],
+              },
+              {
+                name: "rehab_strategy_summary",
+                label: "Rehab strategy summary",
+                type: "textarea",
+                required: true,
+                defaultValue: "Progressive loading, avoid deep flexion.",
+              },
+              {
+                name: "scs_coordination_status",
+                label: "SCS coordination status",
+                type: "select",
+                required: true,
+                defaultValue: "pending",
+                options: ["pending", "in_progress", "complete"],
+              },
+              {
+                name: "severity_level",
+                label: "Severity level",
+                type: "select",
+                required: true,
+                defaultValue: "L2",
+                options: ["L1", "L2", "L3", "L4", "L5"],
+              },
+              {
+                name: "injury_reported_on",
+                label: "Injury reported on",
+                type: "date",
+                required: true,
+                defaultValue: "2026-08-01",
+              },
+            ]}
+          >
+            <div className="space-y-2 rounded-xl bg-slate-50 px-3 py-3 text-left text-[11px] text-slate-600 dark:bg-slate-900/60 dark:text-slate-300">
+              <p>Use the real backend user ID for the airman whose reconditioning plan you want to create or update.</p>
+              {recondPlanError ? <p className="font-semibold text-rose-600 dark:text-rose-300">{recondPlanError}</p> : null}
+              {recondPlanSuccess ? <p className="font-semibold text-emerald-600 dark:text-emerald-300">{recondPlanSuccess}</p> : null}
+            </div>
+          </CreateRecordModal>
+          <RecordDetailDialog
+            open={!!viewingTemplate}
+            onClose={() => setViewingTemplate(null)}
+            title={viewingTemplate?.title ?? "Plan template"}
+            subtitle={viewingTemplate?.desc}
+            badge={
+              viewingTemplate ? (
+                <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-slate-500">
+                  {viewingTemplate.badge}
+                </span>
+              ) : null
+            }
+            fields={
+              viewingTemplate
+                ? [
+                    { label: "Cadence", value: viewingTemplate.cad },
+                    { label: "Window", value: viewingTemplate.win },
+                    { label: "Owner", value: viewingTemplate.owner },
+                  ]
+                : []
+            }
+            actions={
+              viewingTemplate ? (
+                <>
+                  <button
+                    onClick={() => setViewingTemplate(null)}
+                    type="button"
+                    className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => {
+                      selectTemplateForAssignment(viewingTemplate);
+                      setViewingTemplate(null);
+                    }}
+                    type="button"
+                    className="flex-1 py-2 px-4 bg-[var(--brand-color)] hover:opacity-90 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Use template
+                  </button>
+                </>
+              ) : undefined
+            }
+          >
+            {viewingTemplate ? (
+              <div className="space-y-3 rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-600 dark:border-white/5 dark:bg-slate-900/60 dark:text-slate-300">
+                <p className="font-semibold text-slate-800 dark:text-white">Plan details</p>
+                <p className="leading-relaxed">{viewingTemplate.details}</p>
+              </div>
+            ) : null}
+          </RecordDetailDialog>
+
+          <RecordDetailDialog
+            open={!!viewingQueueItem}
+            onClose={() => {
+              setViewingQueueItem(null);
+              setQueueRecommendationId("");
+              setQueueReviewError("");
+              setQueueReviewSuccess("");
+            }}
+            title={viewingQueueItem?.name ?? "Assignment queue item"}
+            subtitle="Queue review and sign-off routing"
+            fields={
+              viewingQueueItem
+                ? [
+                    { label: "Status", value: viewingQueueItem.status },
+                    { label: "Details", value: viewingQueueItem.details },
+                  ]
+                : []
+            }
+            actions={
+              viewingQueueItem ? (
+                <>
+                  <button
+                    onClick={() => setViewingQueueItem(null)}
+                    type="button"
+                    className="flex-1 py-2 px-4 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-semibold transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => {
+                      void handleQueueSendForSignoff();
+                    }}
+                    type="button"
+                    className="flex-1 py-2 px-4 bg-[var(--brand-color)] hover:opacity-90 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    {isSendingQueueReview ? "Sending..." : "Send for sign-off"}
+                  </button>
+                </>
+              ) : undefined
+            }
+          >
+            {viewingQueueItem ? (
+              <div className="space-y-3 rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-600 dark:border-white/5 dark:bg-slate-900/60 dark:text-slate-300">
+                <div className="space-y-1.5">
+                  <label htmlFor="scs-queue-recommendation-id" className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    Recommendation ID
+                  </label>
+                  <input
+                    id="scs-queue-recommendation-id"
+                    type="text"
+                    value={queueRecommendationId}
+                    onChange={(e) => setQueueRecommendationId(e.target.value)}
+                    placeholder="Required for live send-for-signoff API"
+                    className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color)]"
+                  />
+                </div>
+                {queueReviewError ? <p className="font-semibold text-rose-600 dark:text-rose-300">{queueReviewError}</p> : null}
+                {queueReviewSuccess ? <p className="font-semibold text-emerald-600 dark:text-emerald-300">{queueReviewSuccess}</p> : null}
+              </div>
+            ) : null}
+          </RecordDetailDialog>
+
     </div>
   );
 }
