@@ -243,6 +243,7 @@ export type ScsOperatorRow = {
   reported_limitation_recent: boolean;
   oft_status: string;
   reconditioning_active: boolean;
+  ptim_clearance_status: string | null;
   active_risk_flag: string | null;
   driver_flag: string | null;
   ptim_referral_status: string | null;
@@ -253,6 +254,8 @@ export type ScsDashboardData = {
   checked_in_today_count: number;
   missed_checkin_today_count: number;
   low_ops_count: number;
+  oft_cleared_today_count: number;
+  reconditioning_awaiting_review_count: number;
   operators: ScsOperatorRow[];
 };
 
@@ -711,6 +714,25 @@ export async function getCoverageLog(accessToken: string, providerId: string) {
 
 export async function getCoverageLoadByFlight(accessToken: string) {
   return request<CoverageLoadByFlightResponse>(accessToken, "/admin/coverage/reconditioning-load-by-flight");
+}
+
+export type ScsWeeklyAvailabilityProvider = {
+  provider_id: string;
+  provider_name: string;
+  days: Record<string, number>;
+  week_total_hours: number;
+};
+
+// Real shape from coverage_service.get_scs_weekly_availability.
+export type ScsWeeklyAvailabilityResponse = {
+  week_start: string;
+  week_end: string;
+  day_keys: string[];
+  providers: ScsWeeklyAvailabilityProvider[];
+};
+
+export async function getScsWeeklyAvailability(accessToken: string) {
+  return request<ScsWeeklyAvailabilityResponse>(accessToken, "/admin/coverage/scs-weekly-availability");
 }
 
 export async function getPerformanceSummaries(accessToken: string, userId: string) {

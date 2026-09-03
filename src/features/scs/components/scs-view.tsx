@@ -17,6 +17,8 @@ import {
   type CoverageLoadByFlightResponse,
   getScsDashboard,
   type ScsDashboardData,
+  getScsWeeklyAvailability,
+  type ScsWeeklyAvailabilityResponse,
 } from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
@@ -382,6 +384,20 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
       .then(setScsDashboard)
       .catch((err) => triggerToast(getApiErrorMessage(err)))
       .finally(() => setScsDashboardLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // SCS Availability Matrix (Coverage tab) - real, GET /admin/coverage/scs-weekly-availability.
+  const [weeklyAvailability, setWeeklyAvailability] = useState<ScsWeeklyAvailabilityResponse | null>(null);
+  const [weeklyAvailabilityLoading, setWeeklyAvailabilityLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setWeeklyAvailabilityLoading(true);
+    getScsWeeklyAvailability(accessToken)
+      .then(setWeeklyAvailability)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setWeeklyAvailabilityLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -1457,35 +1473,58 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </div>
                 )}
               </div>
-              {/* Flight snapshot — analytics, secondary to the work queue above */}
+              {/* Flight snapshot - real, from GET /dashboard/scs (already
+                  fetched above). "+N this month"/"+N since Mon" trend
+                  deltas from the old mock had no real historical snapshot
+                  to diff against and are dropped rather than fabricated. */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot &middot; analytics</span>
-                  <MockItemBadge label="Partial mock" />
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot · caseload</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                  {[
-                    { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
-                    { name: "Needs review", count: "14", desc: "+3 since Mon", col: "orange" },
-                    { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
-                    { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
-                  ].map((card, i) => (
-                    <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <div className="flex items-baseline gap-2">
-                        <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                        <span className={`text-[10px] font-bold ${
-                          card.col === "green" ? "text-emerald-500" :
-                          card.col === "orange" ? "text-amber-500" :
-                          card.col === "teal" ? "text-[var(--brand-color)]" : "text-slate-500"
-                        }`}>
-                          {card.desc.split(" since ")[0].split(" this ")[0].split(" cleared ")[0].split(" awaiting ")[0]}
-                        </span>
+                {scsDashboardLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading snapshot…</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                    {[
+                      {
+                        name: "Active airmen",
+                        count: String(scsDashboard?.assigned_count ?? 0),
+                        desc: "Assigned to SCS",
+                        col: "green",
+                      },
+                      {
+                        name: "Needs review",
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                        desc: "Active risk flag",
+                        col: "orange",
+                      },
+                      {
+                        name: "OFT clearance queue",
+                        count: String(
+                          (scsDashboard?.operators ?? []).filter((o) =>
+                            ["scheduled", "no_record", "not_current"].includes(o.oft_status)
+                          ).length
+                        ),
+                        desc: `${scsDashboard?.oft_cleared_today_count ?? 0} cleared today`,
+                        col: "teal",
+                      },
+                      {
+                        name: "Reconditioning",
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                        desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                        col: "slate",
+                      },
+                    ].map((card, i) => (
+                      <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                        <div className="flex items-baseline gap-2">
+                          <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                       </div>
-                      <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Surfaces section header */}
@@ -2870,76 +2909,64 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 )}
               </div>
 
-              {/* SCS Availability Matrix */}
-              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              {/* SCS Availability Matrix - real, GET /admin/coverage/scs-weekly-availability.
+                  Cell values are real hours logged via CoverageLog for that
+                  day - a 0 means no coverage was logged, not "unavailable"
+                  (there is no separate schedule/off-duty tracking to tell
+                  the two apart). */}
+              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-2.5">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">SCS availability &middot; this week</h3>
-                    <MockItemBadge />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">SCS availability · this week</h3>
                   </div>
-                  <p className="text-[10px] text-slate-500">Capacity 0-5 &middot; higher = busier</p>
-                  <div className="flex gap-2 text-[9px] font-bold text-slate-500 items-center select-none font-mono">
-                    <span className="px-1 py-0.2 bg-slate-100 dark:bg-slate-800 rounded">0</span>
-                    <span className="px-1 py-0.2 bg-emerald-100 text-emerald-700 rounded">1</span>
-                    <span className="px-1 py-0.2 bg-cyan-100 text-cyan-700 rounded">2</span>
-                    <span className="px-1 py-0.2 bg-amber-100 text-amber-700 rounded">3</span>
-                    <span className="px-1 py-0.2 bg-orange-100 text-orange-700 rounded">4</span>
-                    <span className="px-1 py-0.2 bg-rose-100 text-rose-700 rounded">5</span>
-                  </div>
+                  <p className="text-[10px] text-slate-500">Hours logged per day · {weeklyAvailability?.week_start} to {weeklyAvailability?.week_end}</p>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">SCS</th>
-                        <th className="pb-3 text-center">Mon 27</th>
-                        <th className="pb-3 text-center">Tue 28</th>
-                        <th className="pb-3 text-center">Wed 29</th>
-                        <th className="pb-3 text-center">Thu 30</th>
-                        <th className="pb-3 text-center">Fri 31</th>
-                        <th className="pb-3 text-center">Sat 1</th>
-                        <th className="pb-3 text-center">Sun 2</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5 text-center font-mono">
-                      {[
-                        { scs: "TSgt Lee", title: "Senior SCS", mon: 4, tue: 4, wed: 2, thu: 3, fri: 3, sat: 1, sun: 0 },
-                        { scs: "SSgt Park", title: "SCS - Bravo", mon: 3, tue: 3, wed: 5, thu: 3, fri: 3, sat: 2, sun: 0 },
-                        { scs: "SrA Diaz", title: "SCS - assist", mon: 2, tue: 2, wed: 1, thu: 2, fri: 2, sat: 2, sun: 0 },
-                        { scs: "Capt Shah", title: "PT/IM", mon: 3, tue: 4, wed: 3, thu: 3, fri: 2, sat: 0, sun: 0 },
-                        { scs: "CPT Lead", title: "OFT - tempo", mon: 2, tue: 3, wed: 3, thu: 2, fri: 2, sat: 4, sun: 0 }
-                      ].map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-3 text-left font-bold font-sans">
-                            <span className="text-slate-800 dark:text-white block leading-tight">{row.scs}</span>
-                            <span className="text-[10px] text-slate-400 block font-normal mt-0.5">{row.title}</span>
-                          </td>
-                          {[row.mon, row.tue, row.wed, row.thu, row.fri, row.sat, row.sun].map((val, i) => {
-                            const bg = 
-                              val === 5 ? "bg-rose-500/15 text-rose-500 border border-rose-500/25" :
-                              val === 4 ? "bg-orange-500/15 text-orange-500 border border-orange-500/25" :
-                              val === 3 ? "bg-amber-500/15 text-amber-500 border border-amber-500/25" :
-                              val === 2 ? "bg-cyan-500/15 text-cyan-500 border border-cyan-500/25" :
-                              val === 1 ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25" :
-                              "bg-slate-100 dark:bg-slate-800 text-slate-400";
-                            return (
-                              <td key={i} className="py-3 text-center">
-                                <span className={`inline-block size-6 rounded-md font-bold text-xs flex items-center justify-center mx-auto ${bg}`}>
-                                  {val}
-                                </span>
-                              </td>
-                            );
-                          })}
+                {weeklyAvailabilityLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading availability…</p>
+                ) : !weeklyAvailability || weeklyAvailability.providers.length === 0 ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">No active SCS providers found.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <th className="pb-3 w-1/4">SCS</th>
+                          {weeklyAvailability.day_keys.map((day) => (
+                            <th key={day} className="pb-3 text-center">
+                              {new Date(day).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}
+                            </th>
+                          ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <p className="text-[9px] text-slate-500 font-mono text-left pt-2 border-t border-slate-100 dark:border-white/5">
-                  Peak Wednesday - SSgt Park at 5/5. Recommend splitting Wed OFT prep between two leads.
-                </p>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5 text-center font-mono">
+                        {weeklyAvailability.providers.map((row) => (
+                          <tr key={row.provider_id} className="hover:bg-slate-50/20 transition">
+                            <td className="py-3 text-left font-bold font-sans">
+                              <span className="text-slate-800 dark:text-white block leading-tight">{row.provider_name}</span>
+                              <span className="text-[10px] text-slate-400 block font-normal mt-0.5">{row.week_total_hours}h total</span>
+                            </td>
+                            {weeklyAvailability!.day_keys.map((day) => {
+                              const hours = row.days[day] ?? 0;
+                              const bg =
+                                hours >= 8 ? "bg-rose-500/15 text-rose-500 border border-rose-500/25" :
+                                hours >= 4 ? "bg-amber-500/15 text-amber-500 border border-amber-500/25" :
+                                hours > 0 ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25" :
+                                "bg-slate-100 dark:bg-slate-800 text-slate-400";
+                              return (
+                                <td key={day} className="py-3 text-center">
+                                  <span className={`inline-block min-w-6 px-1 rounded-md font-bold text-xs flex items-center justify-center mx-auto ${bg}`}>
+                                    {hours}
+                                  </span>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Bottom splits roster table & leave widgets */}
