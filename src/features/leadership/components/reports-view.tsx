@@ -54,7 +54,7 @@ function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
 }
 
 export function ReportsView() {
-  const { loading, error, reports, reportTemplates, refreshData, isMutating, setIsMutating } = useLeadership();
+  const { loading, error, reports, reportTemplates, refreshData, isMutating, setIsMutating, triggerToast } = useLeadership();
   const accessToken = useAuthStore((state) => state.accessToken);
   const [reportsFilter, setReportsFilter] = useState("All");
 
@@ -148,7 +148,7 @@ export function ReportsView() {
                         await useLeadershipReportTemplate(accessToken, template.key);
                         await refreshData(`${template.title} template created a live schedule.`);
                       } catch (nextError) {
-                        // handled
+                        triggerToast(getApiErrorMessage(nextError));
                       } finally {
                         setIsMutating(false);
                       }

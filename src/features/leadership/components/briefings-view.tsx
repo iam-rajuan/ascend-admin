@@ -11,11 +11,11 @@ import {
   markLeadershipBriefingReady,
   sendLeadershipBriefing,
   submitLeadershipBriefingForReview,
-  updateLeadershipBriefing,
   type LeadershipBriefingDetail,
 } from "@/lib/role-dashboards-api";
+import { getApiErrorMessage } from "@/lib/staff-api";
 import { AccessibleDialog } from "@/components/ui/accessible-dialog";
-import { Plus, Download, FileText, Send, CheckCircle, XCircle } from "lucide-react";
+import { Plus, Download, FileText, Send, CheckCircle, XCircle, Archive } from "lucide-react";
 
 function formatDate(value: string | null | undefined, withTime = false) {
   if (!value) return "—";
@@ -69,7 +69,7 @@ function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
 }
 
 export function BriefingsView() {
-  const { loading, error, briefings, briefingTemplates, refreshData, isMutating, setIsMutating } = useLeadership();
+  const { loading, error, briefings, briefingTemplates, refreshData, isMutating, setIsMutating, triggerToast } = useLeadership();
   const accessToken = useAuthStore((state) => state.accessToken);
 
   const [selectedBriefingId, setSelectedBriefingId] = useState<string | null>(null);
@@ -77,7 +77,13 @@ export function BriefingsView() {
 
   const [showBriefingWizard, setShowBriefingWizard] = useState(false);
   const [briefingTitle, setBriefingTitle] = useState("");
-  const [briefingTemplateKey, setBriefingTemplateKey] = useState("monthly_command_readiness");
+  // No hardcoded guessed default - "monthly_command_readiness" doesn't
+  // exist in the real template catalog (mission_readiness/recovery_rollout/
+  // quarterly_wing_review), so submitting without touching the dropdown
+  // used to 400 silently (empty catch). Fall back to the first real
+  // template once it loads instead.
+  const [briefingTemplateKey, setBriefingTemplateKey] = useState("");
+  const effectiveTemplateKey = briefingTemplateKey || briefingTemplates[0]?.key || "";
 
   const openBriefingDetail = async (briefingId: string) => {
     if (!accessToken) return;
@@ -86,7 +92,7 @@ export function BriefingsView() {
       const detail = await getLeadershipBriefing(accessToken, briefingId);
       setBriefingDetail(detail);
     } catch (err) {
-      // handled
+      triggerToast(getApiErrorMessage(err));
     }
   };
 
@@ -186,7 +192,7 @@ export function BriefingsView() {
                     const blob = await downloadLeadershipBriefingPdf(accessToken, briefingDetail.id);
                     downloadBlob(blob, `${briefingDetail.id}.pdf`);
                   } catch (nextError) {
-                    // handled
+                    triggerToast(getApiErrorMessage(nextError));
                   } finally {
                     setIsMutating(false);
                   }
@@ -208,7 +214,7 @@ export function BriefingsView() {
                       await openBriefingDetail(briefingDetail.id);
                       await refreshData("Briefing submitted for review.");
                     } catch (err) {
-                      // handled
+                      triggerToast(getApiErrorMessage(err));
                     } finally {
                       setIsMutating(false);
                     }
@@ -231,7 +237,7 @@ export function BriefingsView() {
                       await openBriefingDetail(briefingDetail.id);
                       await refreshData("Briefing marked ready.");
                     } catch (err) {
-                      // handled
+                      triggerToast(getApiErrorMessage(err));
                     } finally {
                       setIsMutating(false);
                     }
@@ -254,7 +260,7 @@ export function BriefingsView() {
                       await openBriefingDetail(briefingDetail.id);
                       await refreshData("Briefing sent.");
                     } catch (err) {
-                      // handled
+                      triggerToast(getApiErrorMessage(err));
                     } finally {
                       setIsMutating(false);
                     }
@@ -264,6 +270,29 @@ export function BriefingsView() {
                   type="button"
                 >
                   <Send className="size-3.5" /> Send
+                </button>
+              )}
+
+              {briefingDetail.status === "sent" && (
+                <button
+                  onClick={async () => {
+                    if (!accessToken) return;
+                    setIsMutating(true);
+                    try {
+                      await archiveLeadershipBriefing(accessToken, briefingDetail.id);
+                      await openBriefingDetail(briefingDetail.id);
+                      await refreshData("Briefing archived.");
+                    } catch (err) {
+                      triggerToast(getApiErrorMessage(err));
+                    } finally {
+                      setIsMutating(false);
+                    }
+                  }}
+                  disabled={isMutating}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold hover:bg-slate-50 dark:border-white/10 dark:hover:bg-slate-800 cursor-pointer"
+                  type="button"
+                >
+                  <Archive className="size-3.5" /> Archive
                 </button>
               )}
             </div>
@@ -303,10 +332,11 @@ export function BriefingsView() {
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Template</label>
                 <select
-                  value={briefingTemplateKey}
+                  value={effectiveTemplateKey}
                   onChange={(e) => setBriefingTemplateKey(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-800 dark:border-white/10 dark:bg-slate-900 dark:text-white"
                 >
+                  {briefingTemplates.length === 0 && <option value="">No templates loaded</option>}
                   {briefingTemplates.map((t) => (
                     <option key={t.key} value={t.key}>{t.title}</option>
                   ))}
@@ -317,24 +347,24 @@ export function BriefingsView() {
               <button onClick={() => setShowBriefingWizard(false)} className="flex-1 rounded-xl border border-slate-200 py-2 text-xs font-semibold hover:bg-slate-50 dark:border-white/10 dark:hover:bg-slate-800 cursor-pointer" type="button">Cancel</button>
               <button
                 onClick={async () => {
-                  if (!accessToken || !briefingTitle.trim()) return;
+                  if (!accessToken || !briefingTitle.trim() || !effectiveTemplateKey) return;
                   setIsMutating(true);
                   try {
                     const newBriefing = await createLeadershipBriefing(accessToken, {
                       title: briefingTitle.trim(),
-                      template_key: briefingTemplateKey,
+                      template_key: effectiveTemplateKey,
                     });
                     setShowBriefingWizard(false);
                     setBriefingTitle("");
                     await openBriefingDetail(newBriefing.id);
                     await refreshData("New briefing created.");
                   } catch (err) {
-                    // handled
+                    triggerToast(getApiErrorMessage(err));
                   } finally {
                     setIsMutating(false);
                   }
                 }}
-                disabled={isMutating || !briefingTitle.trim()}
+                disabled={isMutating || !briefingTitle.trim() || !effectiveTemplateKey}
                 className="flex-1 rounded-xl bg-[var(--brand-color)] py-2 text-xs font-bold text-white disabled:opacity-50 cursor-pointer"
                 type="button"
               >

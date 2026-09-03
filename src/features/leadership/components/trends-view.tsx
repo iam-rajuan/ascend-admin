@@ -64,7 +64,7 @@ function SimpleKeyValueList({ rows }: { rows: { label: string; value: string }[]
 }
 
 export function TrendsView() {
-  const { loading, error, period, setPeriod, trends, refreshData, isMutating, setIsMutating } = useLeadership();
+  const { loading, error, period, setPeriod, trends, refreshData, isMutating, setIsMutating, triggerToast } = useLeadership();
   const accessToken = useAuthStore((state) => state.accessToken);
 
   const [showAnnotationModal, setShowAnnotationModal] = useState(false);
@@ -169,7 +169,7 @@ export function TrendsView() {
                     await deleteLeadershipAnnotation(accessToken, annotation.id);
                     await refreshData("Annotation removed from live trends.");
                   } catch (nextError) {
-                    // handled
+                    triggerToast(getApiErrorMessage(nextError));
                   } finally {
                     setIsMutating(false);
                   }
@@ -238,7 +238,7 @@ export function TrendsView() {
                     setAnnotationNarrative("");
                     await refreshData("Annotation created on live trends.");
                   } catch (err) {
-                    // handled
+                    triggerToast(getApiErrorMessage(err));
                   } finally {
                     setIsMutating(false);
                   }

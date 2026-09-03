@@ -8,7 +8,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { AscendLogo } from "@/components/ascend-logo";
 import { IconButton } from "@/components/ui/icon-button";
-import { LeadershipProvider } from "../context/leadership-context";
+import { LeadershipProvider, useLeadership } from "../context/leadership-context";
 import {
   Activity,
   ArrowLeft,
@@ -36,6 +36,7 @@ function LeadershipLayoutInner({ children }: { children: React.ReactNode }) {
   const logout = useAuthStore((state) => state.logout);
   const currentUser = useCurrentUser();
   const { theme, toggleTheme } = useTheme();
+  const { toastShow, toastMessage } = useLeadership();
 
   const handleLogout = () => {
     logout();
@@ -153,6 +154,12 @@ function LeadershipLayoutInner({ children }: { children: React.ReactNode }) {
           </main>
         </div>
       </div>
+
+      {toastShow && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-800 shadow-lg dark:border-white/10 dark:bg-[#0e1628] dark:text-white">
+          {toastMessage}
+        </div>
+      )}
     </div>
   );
 }
