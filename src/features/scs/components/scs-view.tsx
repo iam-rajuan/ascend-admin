@@ -1670,28 +1670,45 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* 4 Cards Grid */}
+              {/* 4 Cards Grid - real, same GET /dashboard/scs data as Overview's
+                  Flight snapshot. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {[
-                  { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
-                  { name: "Needs review", count: "14", desc: "+3 since Mon", col: "orange" },
-                  { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
-                  { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
+                  {
+                    name: "Active airmen",
+                    count: String(scsDashboard?.assigned_count ?? 0),
+                    desc: "Assigned to SCS",
+                    col: "green",
+                  },
+                  {
+                    name: "Needs review",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                    desc: "Active risk flag",
+                    col: "orange",
+                  },
+                  {
+                    name: "OFT clearance queue",
+                    count: String(
+                      (scsDashboard?.operators ?? []).filter((o) =>
+                        ["scheduled", "no_record", "not_current"].includes(o.oft_status)
+                      ).length
+                    ),
+                    desc: `${scsDashboard?.oft_cleared_today_count ?? 0} cleared today`,
+                    col: "teal",
+                  },
+                  {
+                    name: "Reconditioning",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                    desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                    col: "slate",
+                  },
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <MockItemBadge />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.col === "green" ? "text-emerald-500" :
-                        card.col === "orange" ? "text-amber-500" :
-                        card.col === "teal" ? "text-[var(--brand-color)]" : "text-slate-500"
-                      }`}>
-                        {card.desc.split(" since ")[0].split(" this ")[0].split(" cleared ")[0].split(" awaiting ")[0]}
-                      </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                   </div>
@@ -1715,14 +1732,18 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 {/* Left Column (8/12): Queue roster table & Driver Breakdown */}
                 <div className="lg:col-span-8 space-y-6">
                   
-                  {/* Queue table card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                  {/* Queue table card - real, GET /dashboard/scs operators.
+                      "Confidence" from the old mock had no real per-operator
+                      source and is dropped; OPS trend arrows are dropped too
+                      (no historical snapshot to diff against here). */}
+                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                        <MockItemBadge />
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                          Queue · {(scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length}
+                        </h3>
                       </div>
-                      <p className="text-[10px] text-slate-500 font-mono">Sorted by severity then confidence</p>
+                      <p className="text-[10px] text-slate-500 font-mono">Sorted by OPS score, lowest first</p>
 
                       <div className="flex gap-2">
                         {["Needs review", "OFT", "Reconditioning", "L4+"].map((fPill, idx) => (
@@ -1741,104 +1762,132 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       </div>
                     </div>
 
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            <th className="pb-3">Airman</th>
-                            <th className="pb-3">Driver</th>
-                            <th className="pb-3 text-right">Last Ops</th>
-                            <th className="pb-3">Confidence</th>
-                            <th className="pb-3 text-right">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                          {[
-                            { code: "J. Reyes", details: "SrA", dr: "L4 · Pain - lower back", drCol: "red", ops: "54 \u25bc 8", opsCol: "red", conf: "High", plan: "Rehab Block 2", date: "28 Jul" },
-                            { code: "A. Mendez", details: "A1C", dr: "Sleep · 5 nights", drCol: "badge-orange", ops: "62 \u25bc 3", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                            { code: "T. Cho", details: "SSgt", dr: "OFT · clearance", drCol: "badge-teal", ops: "68 \u25b2 2", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                            { code: "B. Ndiaye", details: "A1C", dr: "Mobility", drCol: "badge-teal", ops: "71 \u25b2 4", opsCol: "green", conf: "High", plan: "Reconditioning", date: "26 Jul" },
-                            { code: "K. Patel", details: "A1C", dr: "Load mgmt", drCol: "badge-orange", ops: "66 \u2014 0", opsCol: "slate", conf: "High", plan: "OFT Tempo Prep", date: "28 Jul" },
-                            { code: "M. Hayes", details: "SrA", dr: "Cycle 4", drCol: "badge-teal", ops: "74 \u25b2 1", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                            { code: "D. Okafor", details: "SSgt", dr: "L3 · hip", drCol: "orange", ops: "58 \u25bc 5", opsCol: "red", conf: "Medium", plan: "Hip Recond.", date: "25 Jul" }
-                          ].filter((row) => matchesQueuePill(dashboardQueueFilter, row) && (dashboardDateRange !== "Today" || row.date === "28 Jul")).map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/20 transition">
-                              <td className="py-2.5">
-                                <span className="font-bold text-slate-800 dark:text-white block">{row.code}</span>
-                                <span className="text-[10px] text-slate-500 block mt-0.5">{row.details}</span>
-                              </td>
-                              <td className="py-2.5">
-                                {row.drCol === "red" && <span className="font-bold text-rose-500">{row.dr}</span>}
-                                {row.drCol === "orange" && <span className="font-bold text-amber-500">{row.dr}</span>}
-                                {row.drCol.startsWith("badge-") && (
-                                  <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                    row.drCol === "badge-teal" ? "bg-cyan-500/10 text-cyan-600" : "bg-amber-500/10 text-amber-600"
-                                  }`}>
-                                    {row.dr}
-                                  </span>
-                                )}
-                              </td>
-                              <td className={`py-2.5 text-right font-mono font-bold ${
-                                row.opsCol === "red" ? "text-rose-500" :
-                                row.opsCol === "green" ? "text-emerald-500" : "text-slate-500"
-                              }`}>{row.ops}</td>
-                              <td className="py-2.5">
-                                <span className="inline-flex items-center gap-1.5 font-bold">
-                                  <span className={`size-1.5 rounded-full ${
-                                    row.conf === "High" ? "bg-emerald-500" : "bg-amber-500"
-                                  }`}></span>
-                                  {row.conf}
-                                </span>
-                              </td>
-                              <td className="py-2.5 text-right">
-                              <button
-                                  onClick={() => { setReviewingAirmanId(row.code); triggerToast(`Opened chart view context: ${row.code}`); }}
-                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                                >
-                                  Open
-                                </button>
-                              </td>
+                    {scsDashboardLoading ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">Loading queue…</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              <th className="pb-3">Airman</th>
+                              <th className="pb-3">Driver</th>
+                              <th className="pb-3 text-right">OPS</th>
+                              <th className="pb-3">Checked in</th>
+                              <th className="pb-3 text-right">Action</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                            {(scsDashboard?.operators ?? [])
+                              .filter((row) => {
+                                switch (dashboardQueueFilter) {
+                                  case "OFT":
+                                    return ["scheduled", "no_record", "not_current"].includes(row.oft_status);
+                                  case "Reconditioning":
+                                    return row.reconditioning_active;
+                                  case "L4+":
+                                    return row.driver_flag === "L4" || row.driver_flag === "L5";
+                                  case "Needs review":
+                                  default:
+                                    return !!row.active_risk_flag;
+                                }
+                              })
+                              .sort((a, b) => (a.current_ops_score ?? 999) - (b.current_ops_score ?? 999))
+                              .map((row) => (
+                                <tr key={row.user_id} className="hover:bg-slate-50/20 transition">
+                                  <td className="py-2.5">
+                                    <span className="font-bold text-slate-800 dark:text-white block">{row.user_name}</span>
+                                  </td>
+                                  <td className="py-2.5">
+                                    {row.active_risk_flag ? (
+                                      <span className="font-bold text-rose-500">
+                                        {row.driver_flag ? `${row.driver_flag} · ` : ""}{row.active_risk_flag}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400">—</span>
+                                    )}
+                                  </td>
+                                  <td className={`py-2.5 text-right font-mono font-bold ${
+                                    row.current_ops_score !== null && row.current_ops_score < 55 ? "text-rose-500" : "text-slate-500"
+                                  }`}>
+                                    {row.current_ops_score ?? "—"}
+                                  </td>
+                                  <td className="py-2.5">
+                                    <span className={`inline-flex items-center gap-1.5 font-bold ${row.checked_in_today ? "text-emerald-500" : "text-slate-400"}`}>
+                                      <span className={`size-1.5 rounded-full ${row.checked_in_today ? "bg-emerald-500" : "bg-slate-400"}`}></span>
+                                      {row.checked_in_today ? "Yes" : "No"}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 text-right">
+                                  <button
+                                      onClick={() => { setReviewingAirmanId(row.user_name); triggerToast(`Opened chart view context: ${row.user_name}`); }}
+                                      className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                                    >
+                                      Open
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
 
                     <div className="pt-3 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[10px] font-mono">
-                      <span className="text-slate-400">Showing 7 of 14 airmen</span>
+                      <span className="text-slate-400">Showing {(scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length} of {scsDashboard?.assigned_count ?? 0} airmen</span>
                       <button type="button" onClick={() => setActiveTab("people")} className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline">
                         View all &rarr;
                       </button>
                     </div>
                   </div>
 
-                  {/* Driver breakdown widget */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                  {/* Driver breakdown widget - real, averaged from GET
+                      /dashboard/scs operators. Mental/Nutritional/Spiritual
+                      from the old mock are dropped - the SCS dashboard's
+                      real per-operator payload only carries
+                      physical_readiness and sleep_readiness. */}
+                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                     <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">Driver Breakdown</h3>
-                      <MockItemBadge />
                     </div>
-                    <p className="text-[9px] text-slate-500 font-mono">Cohort &middot; last 7 days</p>
+                    <p className="text-[9px] text-slate-500 font-mono">Cohort average, current scores</p>
 
-                    <div className="space-y-4 font-sans text-xs">
-                      {[
-                        { label: "Physical", val: 72, col: "bg-cyan-500" },
-                        { label: "Sleep", val: 59, col: "bg-cyan-500" },
-                        { label: "Mental (training implication)", val: 65, col: "bg-blue-500" },
-                        { label: "Nutritional", val: 71, col: "bg-amber-500" },
-                        { label: "Spiritual", val: 70, col: "bg-yellow-500" }
-                      ].map((bar, idx) => (
-                        <div key={idx} className="space-y-1.5">
-                          <div className="flex justify-between items-baseline font-mono text-[10px]">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{bar.label}</span>
-                            <span>{bar.val}</span>
-                          </div>
-                          <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${bar.col}`} style={{ width: `${bar.val}%` }}></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    {scsDashboardLoading ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">Loading&hellip;</p>
+                    ) : (
+                      <div className="space-y-4 font-sans text-xs">
+                        {[
+                          {
+                            label: "Physical",
+                            scores: (scsDashboard?.operators ?? [])
+                              .map((o) => o.physical_readiness)
+                              .filter((v): v is number => v !== null),
+                            col: "bg-cyan-500",
+                          },
+                          {
+                            label: "Sleep",
+                            scores: (scsDashboard?.operators ?? [])
+                              .map((o) => o.sleep_readiness)
+                              .filter((v): v is number => v !== null),
+                            col: "bg-cyan-500",
+                          },
+                        ].map((bar, idx) => {
+                          const val = bar.scores.length
+                            ? Math.round(bar.scores.reduce((sum, v) => sum + v, 0) / bar.scores.length)
+                            : null;
+                          return (
+                            <div key={idx} className="space-y-1.5">
+                              <div className="flex justify-between items-baseline font-mono text-[10px]">
+                                <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{bar.label}</span>
+                                <span>{val ?? "—"}</span>
+                              </div>
+                              <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${bar.col}`} style={{ width: `${val ?? 0}%` }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                 </div>
