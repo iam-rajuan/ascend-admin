@@ -735,6 +735,33 @@ export async function getScsWeeklyAvailability(accessToken: string) {
   return request<ScsWeeklyAvailabilityResponse>(accessToken, "/admin/coverage/scs-weekly-availability");
 }
 
+// Real shape from coverage_service.get_schedule_vs_worked_summary.
+export type ScheduleVsWorkedResponse = {
+  role: string;
+  year: number;
+  entries_with_schedule: number;
+  total_scheduled_hours: number;
+  total_worked_hours: number;
+  worked_pct_of_scheduled: number | null;
+  missed_count: number;
+  missed_by_reason: Record<string, number>;
+};
+
+export async function getScheduleVsWorked(accessToken: string, role: string, year: number) {
+  return request<ScheduleVsWorkedResponse>(accessToken, `/admin/coverage/schedule-vs-worked?role=${role}&year=${year}`);
+}
+
+// Real shape from coverage_service.get_rsd_summary.
+export type RsdSummaryResponse = {
+  year: number;
+  total_rsd_hours: number;
+  session_count: number;
+};
+
+export async function getRsdSummary(accessToken: string, year: number) {
+  return request<RsdSummaryResponse>(accessToken, `/admin/coverage/rsd-summary?year=${year}`);
+}
+
 export async function getPerformanceSummaries(accessToken: string, userId: string) {
   return request<PerformanceSummariesResponse>(accessToken, `/performance-summaries/${userId}`);
 }

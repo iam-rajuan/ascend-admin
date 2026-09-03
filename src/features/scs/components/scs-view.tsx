@@ -19,6 +19,10 @@ import {
   type ScsDashboardData,
   getScsWeeklyAvailability,
   type ScsWeeklyAvailabilityResponse,
+  getScheduleVsWorked,
+  type ScheduleVsWorkedResponse,
+  getRsdSummary,
+  type RsdSummaryResponse,
 } from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
@@ -398,6 +402,30 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
       .then(setWeeklyAvailability)
       .catch((err) => triggerToast(getApiErrorMessage(err)))
       .finally(() => setWeeklyAvailabilityLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // SCS hours coverage + RSD coverage (Coverage tab) - real,
+  // GET /admin/coverage/schedule-vs-worked and GET /admin/coverage/rsd-summary.
+  const currentYear = new Date().getFullYear();
+  const [scheduleVsWorked, setScheduleVsWorked] = useState<ScheduleVsWorkedResponse | null>(null);
+  const [scheduleVsWorkedLoading, setScheduleVsWorkedLoading] = useState(true);
+  const [rsdSummary, setRsdSummary] = useState<RsdSummaryResponse | null>(null);
+  const [rsdSummaryLoading, setRsdSummaryLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setScheduleVsWorkedLoading(true);
+    getScheduleVsWorked(accessToken, "SCS", currentYear)
+      .then(setScheduleVsWorked)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setScheduleVsWorkedLoading(false));
+
+    setRsdSummaryLoading(true);
+    getRsdSummary(accessToken, currentYear)
+      .then(setRsdSummary)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setRsdSummaryLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -2884,28 +2912,35 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* 4 Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {/* Cards Grid - real. "PT sessions / wk" and "OFT lanes
+                  covered" from the old mock are dropped - no lane taxonomy
+                  or weekly PT-session capacity is tracked anywhere in the
+                  backend (same finding documented in coverage_service's
+                  get_reconditioning_load_by_flight docstring). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 {[
-                  { name: "PT sessions / wk", count: "28", desc: "Cap 32 · 88% used", icon: "green" },
-                  { name: "OFT lanes covered", count: "5/7", desc: "-2 uncovered lanes", icon: "red" },
-                  { name: "Reconditioning load", count: "5", desc: "2 awaiting review", icon: "slate" },
-                  { name: "Leave overlap", count: "1", desc: "27 Jul - 29 Jul", icon: "orange" }
+                  {
+                    name: "Reconditioning load",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                    desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                    icon: "slate",
+                  },
+                  {
+                    name: "Leave overlap",
+                    count: String(leaveOverlap?.records.length ?? 0),
+                    desc:
+                      (leaveOverlap?.overlapping_pairs.length ?? 0) > 0
+                        ? `${leaveOverlap!.overlapping_pairs.length} overlapping`
+                        : "No overlaps",
+                    icon: "orange",
+                  },
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <MockItemBadge />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.icon === "green" ? "text-emerald-500" :
-                        card.icon === "teal" ? "text-[var(--brand-color)]" :
-                        card.icon === "red" ? "text-rose-500" : "text-amber-500"
-                      }`}>
-                        {card.desc.split(" · ")[0]}
-                      </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                   </div>
@@ -3181,58 +3216,64 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   )}
                 </div>
 
-                {/* Hours Coverage stats */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                {/* Hours Coverage stats - real, GET /admin/coverage/schedule-vs-worked. */}
+                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
                     <div className="text-left flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <MockItemBadge />
                     </div>
-                    <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked</p>
+                    <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked · {currentYear}</p>
                     <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
                       95% target
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-xs font-sans text-left">
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">160</span>
-                      <span className="text-[9px] text-slate-500 block">Cap 200</span>
+                  {scheduleVsWorkedLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading…</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4 text-xs font-sans text-left">
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_scheduled_hours ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">{scheduleVsWorked?.entries_with_schedule ?? 0} logged entries</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_worked_hours ?? 0}</span>
+                        <span className="text-[9px] text-emerald-500 block">
+                          {scheduleVsWorked?.worked_pct_of_scheduled !== null && scheduleVsWorked?.worked_pct_of_scheduled !== undefined
+                            ? `${scheduleVsWorked.worked_pct_of_scheduled}% of scheduled`
+                            : "No schedule logged yet"}
+                        </span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_worked_hours ?? 0} / 2,080</span>
+                        <span className="text-[9px] text-slate-500 block">DOCX annual target</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
+                        <span className="font-bold text-rose-500 block">{scheduleVsWorked?.missed_count ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">vs scheduled hours</span>
+                      </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">152</span>
-                      <span className="text-[9px] text-emerald-500 block">95% of scheduled</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">1,128 / 2,080</span>
-                      <span className="text-[9px] text-slate-500 block">54% on pace</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
-                      <span className="font-bold text-rose-500 block">8</span>
-                      <span className="text-[9px] text-slate-500 block">2 due to leave</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
               </div>
 
               {/* RSD Coverage block split with RTP+RTD box */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
-                
-                {/* RSD coverage */}
-                <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+
+                {/* RSD coverage - real, GET /admin/coverage/rsd-summary. */}
+                <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
                     <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">RSD coverage (separate)</h3>
-                      <MockItemBadge />
                     </div>
                     <p className="text-[9px] text-slate-500">Restricted-status duty sessions tracked separately</p>
                     <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded font-mono">
-                      36 / 20
+                      {rsdSummaryLoading ? "…" : `${rsdSummary?.total_rsd_hours ?? 0}h / ${rsdSummary?.session_count ?? 0} sessions`}
                     </span>
                   </div>
 
