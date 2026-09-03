@@ -9,6 +9,8 @@ import {
   getMessageThreads,
   getMessageThread,
   sendMessage,
+  getLeaveOverlap,
+  type LeaveOverlapResponse,
 } from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
@@ -318,6 +320,20 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   const [typedMessage, setTypedMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const selectedThread = threads.find((t) => t.other_user_id === selectedChatId);
+
+  // Leave overlap (Coverage tab) - real, GET /admin/leave/overlap?days=30.
+  const [leaveOverlap, setLeaveOverlap] = useState<LeaveOverlapResponse | null>(null);
+  const [leaveOverlapLoading, setLeaveOverlapLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setLeaveOverlapLoading(true);
+    getLeaveOverlap(accessToken, 30)
+      .then(setLeaveOverlap)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setLeaveOverlapLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
 
   // Assign plan forms
   const [assignAirman, setAssignAirman] = useState("J. Reyes");
@@ -2957,33 +2973,49 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Leave overlap, Hours coverage grid */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-left font-sans items-stretch">
                 
-                {/* Leave Overlap */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4">
+                {/* Leave Overlap - real, GET /admin/leave/overlap. */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white">Leave overlap - next 30 days</h3>
-                    <MockItemBadge />
                   </div>
-                  <p className="text-[9px] text-slate-500">SCS, PT/IM, OFT staff</p>
+                  <p className="text-[9px] text-slate-500">Real leave records, window_days={leaveOverlap?.window_days ?? 30}</p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
-                    <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
-                      <span className="font-extrabold text-slate-800 dark:text-white block">TSgt Lee</span>
-                      <span className="text-[10px] text-slate-500 block font-mono">No leave</span>
+                  {leaveOverlapLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading leave records…</p>
+                  ) : !leaveOverlap || leaveOverlap.records.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">No leave scheduled in this window.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+                      {leaveOverlap.records.map((rec) => {
+                        const overlapping = leaveOverlap.overlapping_pairs.filter(
+                          (p) => p.record_id_a === rec.id || p.record_id_b === rec.id
+                        );
+                        const isOverlapping = overlapping.length > 0;
+                        return (
+                          <div
+                            key={rec.id}
+                            className={
+                              isOverlapping
+                                ? "bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl space-y-1 text-center"
+                                : "bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1"
+                            }
+                          >
+                            <span className={`font-extrabold block ${isOverlapping ? "text-amber-600" : "text-slate-800 dark:text-white"}`}>
+                              {rec.user_name || "Unknown"}
+                            </span>
+                            <span className={`text-[10px] block font-mono ${isOverlapping ? "text-amber-500" : "text-slate-500"}`}>
+                              {rec.leave_type_label} · {rec.start_date} - {rec.end_date}
+                            </span>
+                            {isOverlapping && (
+                              <span className="px-1.5 py-0.2 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
+                                overlap · {overlapping[0].overlap_days}d
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    
-                    <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl space-y-1 text-center">
-                      <span className="font-extrabold text-amber-600 block">SSgt Park</span>
-                      <span className="text-[10px] text-amber-500 block font-mono">27 Jul - 29 Jul · 3 days</span>
-                      <span className="px-1.5 py-0.2 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
-                        overlap Med
-                      </span>
-                    </div>
-
-                    <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
-                      <span className="font-extrabold text-slate-800 dark:text-white block">SrA Diaz</span>
-                      <span className="text-[10px] text-slate-500 block font-mono">No leave</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Hours Coverage stats */}

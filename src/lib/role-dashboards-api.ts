@@ -363,10 +363,31 @@ export type UpcomingPtSessionsResponse = {
   sessions: Array<Record<string, unknown>>;
 };
 
+export type LeaveRecordSummary = {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  leave_type: string;
+  leave_type_label: string;
+  start_date: string;
+  end_date: string;
+  note: string | null;
+  created_at: string;
+};
+
+export type LeaveOverlapPair = {
+  record_id_a: string;
+  record_id_b: string;
+  overlap_start: string;
+  overlap_end: string;
+  overlap_days: number;
+};
+
+// Real shape from leave_service.list_overlap_window.
 export type LeaveOverlapResponse = {
-  days: number;
-  overlapping_pairs?: Array<Record<string, unknown>>;
-  overlaps?: Array<Record<string, unknown>>;
+  window_days: number;
+  records: LeaveRecordSummary[];
+  overlapping_pairs: LeaveOverlapPair[];
 };
 
 export type LeaveHistoryResponse = {
