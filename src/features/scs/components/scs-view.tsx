@@ -2111,47 +2111,62 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Hours coverage and RTP splits */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
                 
-                {/* Hours coverage stats */}
+                {/* Hours coverage stats - real, same GET
+                    /admin/coverage/schedule-vs-worked + GET
+                    /admin/coverage/rsd-summary data already fetched for
+                    the Coverage tab (this is the same org-wide SCS
+                    coverage stat, not per-airman - Dashboard tab
+                    duplicates the Coverage tab's card). */}
                 <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
                     <div>
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <p className="text-[9px] text-slate-500 font-mono">Scheduled + worked &middot; progress toward 2,080 annual</p>
+                      <p className="text-[9px] text-slate-500 font-mono">Scheduled + worked · progress toward 2,080 annual</p>
                     </div>
                     <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
                       95% target
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-left">
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">160</span>
-                      <span className="text-[9px] text-slate-500 block">Cap 200</span>
+                  {scheduleVsWorkedLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading…</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4 text-left">
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_scheduled_hours ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">{scheduleVsWorked?.entries_with_schedule ?? 0} logged entries</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_worked_hours ?? 0}</span>
+                        <span className="text-[9px] text-emerald-500 block">
+                          {scheduleVsWorked?.worked_pct_of_scheduled !== null && scheduleVsWorked?.worked_pct_of_scheduled !== undefined
+                            ? `${scheduleVsWorked.worked_pct_of_scheduled}% of scheduled`
+                            : "No schedule logged yet"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block font-mono">{scheduleVsWorked?.total_worked_hours ?? 0} / 2,080</span>
+                        <span className="text-[9px] text-slate-500 block">DOCX annual target</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
+                        <span className="font-bold text-rose-500 block">{scheduleVsWorked?.missed_count ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">vs scheduled hours</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">152</span>
-                      <span className="text-[9px] text-emerald-500 block">95% of scheduled</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block font-mono">1,128 / 2,080</span>
-                      <span className="text-[9px] text-slate-500 block">54% on pace</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
-                      <span className="font-bold text-rose-500 block">8</span>
-                      <span className="text-[9px] text-slate-500 block">2 due to leave</span>
-                    </div>
-                  </div>
+                  )}
 
                   <div className="pt-2 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[9px] font-mono">
                     <span className="text-slate-500">RSD coverage (separate)</span>
-                    <span className="font-bold text-amber-500 font-sans">36 / 20</span>
+                    <span className="font-bold text-amber-500 font-sans">
+                      {rsdSummaryLoading ? "…" : `${rsdSummary?.total_rsd_hours ?? 0}h / ${rsdSummary?.session_count ?? 0} sessions`}
+                    </span>
                   </div>
                   <p className="text-[9px] text-slate-500 leading-relaxed font-sans mt-1">
-                    Restricted-status duty sessions &mdash; tracked separate from regular SCS hours.
+                    Restricted-status duty sessions — tracked separate from regular SCS hours.
                   </p>
                 </div>
 
