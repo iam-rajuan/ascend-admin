@@ -2,7 +2,14 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { assignRecommendation, sendRecommendationForSignoff, upsertReconditioningPlan } from "@/lib/role-dashboards-api";
+import {
+  assignRecommendation,
+  sendRecommendationForSignoff,
+  upsertReconditioningPlan,
+  getMessageThreads,
+  getMessageThread,
+  sendMessage,
+} from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
 import { AscendLogo } from "@/components/ascend-logo";
@@ -58,6 +65,39 @@ interface MessageRow {
   sender: "scs" | "airman";
   text: string;
   time: string;
+}
+
+// Real /messaging/threads preview shape (messaging_service.list_threads).
+type ThreadPreview = {
+  thread_key: string;
+  other_user_id: string;
+  other_user_name: string | null;
+  other_user_role: string;
+  last_message_body: string;
+  last_message_at: string;
+  unread_count: number;
+};
+
+// Real /messaging/thread/{other_user_id} message shape (messaging_service._serialize).
+type RealMessage = {
+  id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+};
+
+function formatRelativeShort(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 type WorkoutRecord = {
@@ -267,31 +307,17 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   type DmThread = { initials: string; name: string; time: string; txt: string; unread: boolean; active: boolean };
   const [dmThreads, setDmThreads] = useState<DmThread[]>([]);
 
-  // Chat/Messages states
-  const [selectedChatId, setSelectedChatId] = useState<string>("J. Reyes");
+  // Chat/Messages states - real, backed by GET /messaging/threads,
+  // GET /messaging/thread/{other_user_id}, POST /messaging/send.
+  const [threads, setThreads] = useState<ThreadPreview[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(true);
+  const [threadSearch, setThreadSearch] = useState("");
+  const [selectedChatId, setSelectedChatId] = useState<string>("");
+  const [activeThreadMessages, setActiveThreadMessages] = useState<RealMessage[]>([]);
+  const [activeThreadLoading, setActiveThreadLoading] = useState(false);
   const [typedMessage, setTypedMessage] = useState("");
-  
-  // Custom mock chat threads matching Figma data
-  const [chatThreads, setChatThreads] = useState<Record<string, MessageRow[]>>({
-    "J. Reyes": [
-      { sender: "scs", text: "Take today lighter. Start the 12-min reset before duty, and keep deadlifts sub-80% this week.", time: "06:35" },
-      { sender: "airman", text: "Got it. Started the mobility reset \u2014 felt pretty good today.", time: "06:42" },
-      { sender: "airman", text: "Ready for mobility. Are we good to move into block 2 on Monday?", time: "06:14" },
-      { sender: "airman", text: "Also \u2014 slept 7.5h last night, anchored at 22:30. The dim-evening routine is helping.", time: "06:18" }
-    ],
-    "A. Mendez": [
-      { sender: "airman", text: "Sleep timing past 3 nights has been inconsistent due to night shifts. Can we adjust my loading block?", time: "Yesterday" },
-      { sender: "scs", text: "Understood. Keep intensity around RPE 6-7. Focus on hydration and the dim-light sleep routine.", time: "Yesterday" }
-    ],
-    "T. Cho": [
-      { sender: "airman", text: "OFT cleared \u2014 thanks TSgt Lee! Deadlift felt stable throughout.", time: "Yesterday" },
-      { sender: "scs", text: "Excellent news, Cho. Transitioning you back to Cycle 4 performance. Keep up the pre-hab.", time: "Yesterday" }
-    ],
-    "D. Okafor": [
-      { sender: "airman", text: "Hip \u2014 still tight after rehab sessions. Felt a pinch during squats.", time: "23 Jul" },
-      { sender: "scs", text: "Okay, hold squats for now. We will swap them with hip-hinge glute bridges on block 1.", time: "23 Jul" }
-    ]
-  });
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const selectedThread = threads.find((t) => t.other_user_id === selectedChatId);
 
   // Assign plan forms
   const [assignAirman, setAssignAirman] = useState("J. Reyes");
@@ -307,18 +333,62 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   const [assignmentsFilter, setAssignmentsFilter] = useState<string>(PLAN_STATUSES.ACTIVE);
   const [coverageWeek, setCoverageWeek] = useState("This week");
 
-  const handleSendMessage = () => {
-    if (!typedMessage.trim()) return;
-    const currentThread = chatThreads[selectedChatId] || [];
-    setChatThreads({
-      ...chatThreads,
-      [selectedChatId]: [
-        ...currentThread,
-        { sender: "scs", text: typedMessage, time: "Just now" }
-      ]
-    });
-    setTypedMessage("");
-    triggerToast("Message sent and audit-logged");
+  const refreshThreads = async () => {
+    if (!accessToken) return;
+    setThreadsLoading(true);
+    try {
+      const data = await getMessageThreads(accessToken);
+      const list = (data.threads as unknown as ThreadPreview[]) || [];
+      setThreads(list);
+      if (!selectedChatId && list.length > 0) {
+        setSelectedChatId(list[0].other_user_id);
+      }
+    } catch (err) {
+      triggerToast(getApiErrorMessage(err));
+    } finally {
+      setThreadsLoading(false);
+    }
+  };
+
+  const openThread = async (otherUserId: string) => {
+    if (!accessToken || !otherUserId) return;
+    setSelectedChatId(otherUserId);
+    setActiveThreadLoading(true);
+    try {
+      const data = await getMessageThread(accessToken, otherUserId);
+      setActiveThreadMessages((data.messages as unknown as RealMessage[]) || []);
+    } catch (err) {
+      triggerToast(getApiErrorMessage(err));
+    } finally {
+      setActiveThreadLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (activeTab === "messages" && selectedChatId) {
+      void openThread(selectedChatId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedChatId]);
+
+  const handleSendMessage = async () => {
+    if (!typedMessage.trim() || !selectedChatId || !accessToken || sendingMessage) return;
+    setSendingMessage(true);
+    try {
+      await sendMessage(accessToken, { recipient_id: selectedChatId, body: typedMessage });
+      setTypedMessage("");
+      triggerToast("Message sent and audit-logged");
+      await Promise.all([openThread(selectedChatId), refreshThreads()]);
+    } catch (err) {
+      triggerToast(getApiErrorMessage(err));
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   const focusPlanForm = () => {
@@ -3035,15 +3105,12 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Chat View splits grid */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start text-left font-sans text-xs">
                 
-                {/* Left Side: Inbox search list */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4">
+                {/* Left Side: Inbox search list - real, GET /messaging/threads. */}
+                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
-                      <MockItemBadge />
-                    </div>
+                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
                     <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-600 text-[8.5px] font-bold rounded-full uppercase tracking-wider font-mono">
-                      7 unread
+                      {threads.reduce((sum, t) => sum + t.unread_count, 0)} unread
                     </span>
                   </div>
 
@@ -3053,6 +3120,8 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       type="text"
                       aria-label="Search messages"
                       placeholder="Search messages"
+                      value={threadSearch}
+                      onChange={(e) => setThreadSearch(e.target.value)}
                       className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-55 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400"
                     />
                     <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
@@ -3060,96 +3129,113 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
 
                   {/* Chats list */}
                   <div className="space-y-2">
-                    {[
-                      { name: "J. Reyes", role: "SrA · Alpha flight", preview: "Ready for mobility \u2014 good to move to bloc...", time: "06:18", unread: 2 },
-                      { name: "A. Mendez", role: "SSgt · Bravo flight", preview: "Sleep timing past 3 nights", time: "Yest", unread: 1 },
-                      { name: "T. Cho", role: "A1C · Alpha flight", preview: "OFT cleared \u2014 thanks TSgt", time: "Yest", unread: 1 },
-                      { name: "D. Okafor", role: "SSgt · Alpha flight", preview: "Hip \u2014 still tight after rehab", time: "23 Jul", unread: 3 },
-                      { name: "B. Ndiaye", role: "A1C · Charlie flight", preview: "Mobility reset \u2014 what level?", time: "25 Jul" },
-                      { name: "K. Patel", role: "A1C · Bravo flight", preview: "OFT tempo prep · week 2", time: "24 Jul" },
-                      { name: "M. Hayes", role: "SrA · Alpha flight", preview: "Cycle 4 \u2014 red-line felt good", time: "20 Jul" },
-                      { name: "Capt Shah · PT/IM", role: "Clinician co-owner", preview: "Coordination checklist response", time: "19 Jul" }
-                    ].map((chat, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() => {
-                          setSelectedChatId(chat.name);
-                          triggerToast(`Switched thread: ${chat.name}`);
-                        }}
-                        className={`p-3 rounded-xl border text-left cursor-pointer transition ${
-                          selectedChatId === chat.name 
-                            ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]" 
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 hover:border-slate-300"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between font-mono text-[9px] gap-2">
-                          <span className="font-bold text-slate-800 dark:text-white font-sans text-xs">{chat.name}</span>
-                          <span className="text-slate-500">{chat.time}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 block leading-tight mt-0.5 font-sans font-medium">{chat.role}</span>
-                        <div className="flex items-center justify-between gap-4 mt-2">
-                          <p className="text-[10px] text-slate-500 truncate w-48 font-sans">{chat.preview}</p>
-                          {chat.unread && (
-                            <span className="size-4 bg-[var(--brand-color)] text-white text-[8px] font-bold rounded-full flex items-center justify-center font-mono">
-                              {chat.unread}
+                    {threadsLoading ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">Loading threads…</p>
+                    ) : threads.length === 0 ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">No messages yet.</p>
+                    ) : (
+                      threads
+                        .filter((t) => {
+                          const q = threadSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            (t.other_user_name || "").toLowerCase().includes(q) ||
+                            t.last_message_body.toLowerCase().includes(q)
+                          );
+                        })
+                        .map((chat) => (
+                          <div
+                            key={chat.other_user_id}
+                            onClick={() => void openThread(chat.other_user_id)}
+                            className={`p-3 rounded-xl border text-left cursor-pointer transition ${
+                              selectedChatId === chat.other_user_id
+                                ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]"
+                                : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between font-mono text-[9px] gap-2">
+                              <span className="font-bold text-slate-800 dark:text-white font-sans text-xs">
+                                {chat.other_user_name || "Unknown"}
+                              </span>
+                              <span className="text-slate-500">{formatRelativeShort(chat.last_message_at)}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 block leading-tight mt-0.5 font-sans font-medium">
+                              {chat.other_user_role}
                             </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                            <div className="flex items-center justify-between gap-4 mt-2">
+                              <p className="text-[10px] text-slate-500 truncate w-48 font-sans">{chat.last_message_body}</p>
+                              {chat.unread_count > 0 && (
+                                <span className="size-4 bg-[var(--brand-color)] text-white text-[8px] font-bold rounded-full flex items-center justify-center font-mono">
+                                  {chat.unread_count}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                    )}
                   </div>
 
                 </div>
 
-                {/* Right Side: Active Chat dialog thread */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
+                {/* Right Side: Active Chat dialog thread - real. */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
                   
-                  {/* Chat Header */}
+                  {/* Chat Header - real. */}
                   <div className="p-4 border-b border-slate-100 dark:border-white/5 bg-[#f8fafc] dark:bg-slate-900/60 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="size-8 rounded-full bg-cyan-500/10 text-[var(--brand-color)] font-bold text-xs flex items-center justify-center select-none font-mono">
-                        {selectedChatId.charAt(0)}
+                        {(selectedThread?.other_user_name || "?").charAt(0)}
                       </div>
                       <div className="text-left">
-                        <span className="font-bold text-slate-800 dark:text-white block text-sm">{selectedChatId}</span>
+                        <span className="font-bold text-slate-800 dark:text-white block text-sm">
+                          {selectedThread?.other_user_name || "Select a thread"}
+                        </span>
                         <span className="text-[10px] text-slate-500 block mt-0.5">
-                          {selectedChatId === "J. Reyes" ? "SrA · Alpha flight · Rehab Block 2" : "Active chat recipient"}
+                          {selectedThread?.other_user_role || "—"}
                         </span>
                       </div>
                     </div>
 
-                    {selectedChatId === "J. Reyes" && (
-                      <button 
-                        onClick={() => { setReviewingAirmanId("J. Reyes"); triggerToast("Opening full profile for J. Reyes"); }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-[10px] font-bold rounded-lg text-rose-700 dark:text-rose-200 transition cursor-pointer"
+                    {selectedThread && (
+                      <button
+                        onClick={() => {
+                          setReviewingAirmanId(selectedThread.other_user_name || selectedThread.other_user_id);
+                          triggerToast(`Opening full profile for ${selectedThread.other_user_name}`);
+                        }}
+                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 text-[10px] font-bold rounded-lg text-slate-700 dark:text-slate-200 transition cursor-pointer"
                       >
                         View profile
                       </button>
                     )}
                   </div>
 
-                  {/* Chat bubbles list */}
+                  {/* Chat bubbles list - real. */}
                   <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50/50 dark:bg-[#0e1628]">
-                    
-                    {/* Timestamp separator */}
-                    <div className="text-center font-mono text-[9px] text-slate-400 select-none uppercase tracking-wider">
-                      27 July
-                    </div>
-
-                    {(chatThreads[selectedChatId] || []).map((msg, i) => (
-                      <div key={i} className={`flex ${msg.sender === "scs" ? "justify-end" : "justify-start"}`}>
-                        <div className={`p-4 rounded-2xl max-w-sm text-xs leading-relaxed space-y-1.5 ${
-                          msg.sender === "scs" 
-                            ? "bg-[#008094] text-white rounded-tr-none text-left" 
-                            : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 text-slate-700 dark:text-slate-300 rounded-tl-none text-left"
-                        }`}>
-                          <p className="font-sans font-medium">{msg.text}</p>
-                          <span className={`text-[8px] font-mono block text-right leading-none ${
-                            msg.sender === "scs" ? "text-cyan-200" : "text-slate-400"
-                          }`}>{msg.time}</span>
-                        </div>
-                      </div>
-                    ))}
+                    {activeThreadLoading ? (
+                      <p className="text-[10px] text-slate-400 text-center py-6">Loading messages…</p>
+                    ) : !selectedChatId ? (
+                      <p className="text-[10px] text-slate-400 text-center py-6">Select a thread on the left to view messages.</p>
+                    ) : activeThreadMessages.length === 0 ? (
+                      <p className="text-[10px] text-slate-400 text-center py-6">No messages yet. Say hello below.</p>
+                    ) : (
+                      activeThreadMessages.map((msg) => {
+                        const mine = msg.sender_id === currentUser?.id;
+                        return (
+                          <div key={msg.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                            <div className={`p-4 rounded-2xl max-w-sm text-xs leading-relaxed space-y-1.5 ${
+                              mine
+                                ? "bg-[#008094] text-white rounded-tr-none text-left"
+                                : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 text-slate-700 dark:text-slate-300 rounded-tl-none text-left"
+                            }`}>
+                              <p className="font-sans font-medium">{msg.body}</p>
+                              <span className={`text-[8px] font-mono block text-right leading-none ${
+                                mine ? "text-cyan-200" : "text-slate-400"
+                              }`}>{formatRelativeShort(msg.created_at)}</span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
 
                   </div>
 
@@ -3163,18 +3249,20 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        aria-label={`Message ${selectedChatId}`}
-                        placeholder={`Message ${selectedChatId}`}
+                        aria-label={`Message ${selectedThread?.other_user_name || ""}`}
+                        placeholder={selectedThread ? `Message ${selectedThread.other_user_name}` : "Select a thread first"}
                         value={typedMessage}
+                        disabled={!selectedChatId || sendingMessage}
                         onChange={(e) => setTypedMessage(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                        className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400"
+                        onKeyDown={(e) => e.key === "Enter" && void handleSendMessage()}
+                        className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400 disabled:opacity-60"
                       />
-                      <button 
-                        onClick={handleSendMessage}
-                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                      <button
+                        onClick={() => void handleSendMessage()}
+                        disabled={!selectedChatId || sendingMessage || !typedMessage.trim()}
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        Send
+                        {sendingMessage ? "Sending…" : "Send"}
                       </button>
                     </div>
 
