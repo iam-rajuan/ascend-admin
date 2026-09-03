@@ -291,6 +291,24 @@ export type MentalDriverScoresResponse = {
   drivers: Record<string, number | null> | null;
 };
 
+// Real shape from provider_dashboard_service.get_meal_consistency_by_flight -
+// Nutritionist-only, k-gated per-flight aggregate.
+export type MealConsistencyByFlightResponse = {
+  window_days: number;
+  min_cohort_size: number;
+  total_flights: number;
+  flights_meeting_cohort_minimum: number;
+  flights: Array<{
+    flight_id: string;
+    flight_name: string;
+    cohort_size: number;
+    flagged_members: number;
+    flagged_rate_pct: number;
+    consistency_level: string;
+    pending_review_count: number;
+  }>;
+};
+
 export type ActiveRecommendationsResponse = {
   recommendations?: Array<Record<string, unknown>>;
 } | null;
@@ -878,6 +896,10 @@ export async function getSpecialistDashboard(accessToken: string) {
 
 export async function getMentalDriverScores(accessToken: string) {
   return request<MentalDriverScoresResponse>(accessToken, "/dashboard/mp/mental-drivers");
+}
+
+export async function getMealConsistencyByFlight(accessToken: string) {
+  return request<MealConsistencyByFlightResponse>(accessToken, "/dashboard/nutrition/meal-consistency");
 }
 
 export async function listUploadedRecords(accessToken: string, documentType = "all") {
