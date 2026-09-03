@@ -15,6 +15,8 @@ import {
   type TodayPtSessionsResponse,
   getCoverageLoadByFlight,
   type CoverageLoadByFlightResponse,
+  getScsDashboard,
+  type ScsDashboardData,
 } from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
@@ -364,6 +366,22 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
       .then(setFlightLoad)
       .catch((err) => triggerToast(getApiErrorMessage(err)))
       .finally(() => setFlightLoadLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // SCS dashboard operators - real, GET /dashboard/scs. Shared source for
+  // the Overview "Work Queue" and (later) Dashboard/People tab sections -
+  // real per-operator flags, not a fabricated aggregate queue.
+  const [scsDashboard, setScsDashboard] = useState<ScsDashboardData | null>(null);
+  const [scsDashboardLoading, setScsDashboardLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setScsDashboardLoading(true);
+    getScsDashboard(accessToken)
+      .then(setScsDashboard)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setScsDashboardLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -1370,44 +1388,75 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* ACTIONABLE WORK QUEUE — priority items first, clickable, opens filtered records (Req 3) */}
+              {/* ACTIONABLE WORK QUEUE - real, GET /dashboard/scs.
+                  "New Assignment" and "Follow-up Due" from the old mock had
+                  no real backing signal (no assignment-created-date or
+                  follow-up-due tracking exists) and are dropped rather than
+                  approximated; the remaining 3 cards use real per-operator
+                  flags already computed by the backend, plus real unread
+                  message counts (already wired above). */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Work Queue &middot; requires your action</h3>
-                    <MockItemBadge />
                   </div>
                   <span className="text-[9px] text-slate-500 font-mono">{POPULATION_LEVELS.CASELOAD}</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                  {[
-                    { name: ALERT_TYPES.NEW_ASSIGNMENT, count: "4", desc: "New to your caseload this week", tab: "people" as TabType, col: "teal" },
-                    { name: ALERT_TYPES.FOLLOW_UP_DUE, count: "6", desc: "Follow-up check due within 48h", tab: "people" as TabType, col: "orange" },
-                    { name: ALERT_TYPES.OVERDUE_ACTION, count: "3", desc: "Past due &mdash; review before 11:00", tab: "people" as TabType, col: "red" },
-                    { name: ALERT_TYPES.UNREAD_MESSAGE, count: "7", desc: "Unread in Messages", tab: "messages" as TabType, col: "teal" },
-                    { name: ALERT_TYPES.PLAN_REVIEW, count: "2", desc: "Awaiting PT/IM sign-off", tab: "plans" as TabType, col: "orange" }
-                  ].map((card, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setActiveTab(card.tab); triggerToast(`Opening ${card.name.toLowerCase()} queue`); }}
-                      className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 hover:border-rose-400 dark:hover:border-rose-400/60 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
-                    >
-                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <div className="flex items-baseline gap-2">
-                        <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                        <span className={`text-[10px] font-bold ${
-                          card.col === "red" ? "text-rose-500" :
-                          card.col === "orange" ? "text-amber-500" : "text-[var(--brand-color)]"
-                        }`}>
-                          &rarr; open
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                    </button>
-                  ))}
-                </div>
+                {scsDashboardLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading work queue&hellip;</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {[
+                      {
+                        name: "Low OPS",
+                        count: String(scsDashboard?.low_ops_count ?? 0),
+                        desc: "Below 55 OPS score",
+                        tab: "people" as TabType,
+                        col: "red",
+                      },
+                      {
+                        name: ALERT_TYPES.OVERDUE_ACTION,
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                        desc: "Active risk flag on caseload",
+                        tab: "people" as TabType,
+                        col: "red",
+                      },
+                      {
+                        name: ALERT_TYPES.UNREAD_MESSAGE,
+                        count: String(threads.reduce((sum, t) => sum + t.unread_count, 0)),
+                        desc: "Unread in Messages",
+                        tab: "messages" as TabType,
+                        col: "teal",
+                      },
+                      {
+                        name: ALERT_TYPES.PLAN_REVIEW,
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.ptim_referral_status === "pending").length),
+                        desc: "Awaiting PT/IM referral",
+                        tab: "plans" as TabType,
+                        col: "orange",
+                      },
+                    ].map((card, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { setActiveTab(card.tab); triggerToast(`Opening ${card.name.toLowerCase()} queue`); }}
+                        className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/20 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
+                      >
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                        <div className="flex items-baseline gap-2">
+                          <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
+                          <span className={`text-[10px] font-bold ${
+                            card.col === "red" ? "text-rose-500" :
+                            card.col === "orange" ? "text-amber-500" : "text-[var(--brand-color)]"
+                          }`}>
+                            &rarr; open
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-
               {/* Flight snapshot — analytics, secondary to the work queue above */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2">

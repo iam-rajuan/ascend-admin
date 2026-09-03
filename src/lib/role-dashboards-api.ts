@@ -230,12 +230,30 @@ export type LeadershipBriefingDetail = {
   archived_at: string | null;
 };
 
+// Real per-operator row from provider_dashboard_service._build_scs_row.
+export type ScsOperatorRow = {
+  user_id: string;
+  user_name: string;
+  current_ops_score: number | null;
+  current_ops_band: string | null;
+  physical_readiness: number | null;
+  sleep_readiness: number | null;
+  checked_in_today: boolean;
+  missed_workouts_recent: number;
+  reported_limitation_recent: boolean;
+  oft_status: string;
+  reconditioning_active: boolean;
+  active_risk_flag: string | null;
+  driver_flag: string | null;
+  ptim_referral_status: string | null;
+};
+
 export type ScsDashboardData = {
   assigned_count: number;
   checked_in_today_count: number;
   missed_checkin_today_count: number;
   low_ops_count: number;
-  operators: Array<Record<string, unknown>>;
+  operators: ScsOperatorRow[];
 };
 
 export type PtimDashboardData = {
