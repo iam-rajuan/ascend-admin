@@ -1058,8 +1058,31 @@ export async function deleteLeaveRecord(accessToken: string, leaveId: string) {
   });
 }
 
+export type PtSessionSummary = {
+  id: string;
+  lead_provider_id: string;
+  lead_provider_name: string | null;
+  lead_provider_role: string;
+  session_date: string;
+  start_time: string;
+  group_label: string;
+  focus: string;
+  focus_label: string;
+  capacity: number;
+  enrolled_count: number;
+  capacity_pct: number;
+  status: string;
+  created_at: string;
+};
+
+// Real shape from pt_session_service._list_for_date.
+export type TodayPtSessionsResponse = {
+  date: string;
+  sessions: PtSessionSummary[];
+};
+
 export async function getTodayPtSessions(accessToken: string) {
-  return request<{ sessions: Array<Record<string, unknown>> }>(accessToken, "/admin/pt-sessions/today");
+  return request<TodayPtSessionsResponse>(accessToken, "/admin/pt-sessions/today");
 }
 
 export async function downloadMessageAttachment(accessToken: string, messageId: string) {

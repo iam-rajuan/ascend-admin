@@ -11,6 +11,8 @@ import {
   sendMessage,
   getLeaveOverlap,
   type LeaveOverlapResponse,
+  getTodayPtSessions,
+  type TodayPtSessionsResponse,
 } from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
@@ -332,6 +334,20 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
       .then(setLeaveOverlap)
       .catch((err) => triggerToast(getApiErrorMessage(err)))
       .finally(() => setLeaveOverlapLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // Agenda Timeline (Overview tab) - real, GET /admin/pt-sessions/today.
+  const [todaySessions, setTodaySessions] = useState<TodayPtSessionsResponse | null>(null);
+  const [todaySessionsLoading, setTodaySessionsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setTodaySessionsLoading(true);
+    getTodayPtSessions(accessToken)
+      .then(setTodaySessions)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setTodaySessionsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -1453,48 +1469,41 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Timeline and k>=5 Notes split layout */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 
-                {/* Timeline agenda */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                {/* Timeline agenda - real, GET /admin/pt-sessions/today.
+                    Only PT sessions are a real, tracked event type here;
+                    "OFT clearance run"/"Rehab review"/"Plan sync" from the
+                    old mock had no real backing source and are dropped
+                    rather than approximated. */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                    <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono">Today &middot; 28 Jul</span>
+                    <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono">
+                      Today · {todaySessions?.date ?? ""}
+                    </span>
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white">Agenda Timeline</h3>
                     </div>
-                    <MockItemBadge />
                   </div>
 
-                  <div className="relative border-l border-slate-100 dark:border-white/5 pl-6 ml-2 space-y-6 text-xs font-sans">
-                    
-                    {/* Item 1 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">06:42</span>
-                      <span className="font-bold text-slate-800 dark:text-white block mt-0.5">OFT clearance run</span>
-                      <span className="text-[10px] text-emerald-500 block leading-tight font-mono">3 cleared</span>
+                  {todaySessionsLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading today’s sessions…</p>
+                  ) : !todaySessions || todaySessions.sessions.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">No PT sessions scheduled today.</p>
+                  ) : (
+                    <div className="relative border-l border-slate-100 dark:border-white/5 pl-6 ml-2 space-y-6 text-xs font-sans">
+                      {todaySessions.sessions.map((s) => (
+                        <div key={s.id} className="relative">
+                          <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
+                          <span className="font-mono text-slate-400 text-[10px] block">{s.start_time}</span>
+                          <span className="font-bold text-slate-800 dark:text-white block mt-0.5">
+                            {s.group_label} · {s.focus_label}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block leading-tight font-mono">
+                            {s.enrolled_count}/{s.capacity} enrolled ({s.capacity_pct}%) · {s.lead_provider_name}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-
-                    {/* Item 2 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">07:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">PT session &middot; Alpha flight</span>
-                    </div>
-
-                    {/* Item 3 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-slate-300 dark:bg-slate-700 border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">11:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">Rehab review &middot; J. Reyes</span>
-                    </div>
-
-                    {/* Item 4 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-slate-300 dark:bg-slate-700 border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">14:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">Plan sync with PT/IM</span>
-                    </div>
-
-                  </div>
+                  )}
                 </div>
 
                 {/* k>=5 Guidelines notes */}
