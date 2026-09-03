@@ -283,11 +283,23 @@ export type ReconditioningRestrictionsResponse = {
   restrictions: Array<Record<string, unknown>>;
 };
 
+export type FlightReconditioningLoad = {
+  flight_id: string;
+  flight_name: string;
+  cohort_size: number;
+  active_reconditioning_count: number;
+  load_pct: number;
+};
+
+// Real shape from coverage_service.get_reconditioning_load_by_flight.
+// Deliberately only reconditioning load - PT/OFT lanes and a per-flight
+// "capacity" number have no real data source anywhere in the backend and
+// were never built (see the service method's own docstring).
 export type CoverageLoadByFlightResponse = {
   min_cohort_size: number;
   total_flights: number;
   flights_meeting_cohort_minimum: number;
-  flights: Array<Record<string, unknown>>;
+  flights: FlightReconditioningLoad[];
 };
 
 export type PerformanceSummariesResponse = {

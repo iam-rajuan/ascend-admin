@@ -13,6 +13,8 @@ import {
   type LeaveOverlapResponse,
   getTodayPtSessions,
   type TodayPtSessionsResponse,
+  getCoverageLoadByFlight,
+  type CoverageLoadByFlightResponse,
 } from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
@@ -348,6 +350,20 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
       .then(setTodaySessions)
       .catch((err) => triggerToast(getApiErrorMessage(err)))
       .finally(() => setTodaySessionsLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // Workload by flight (Plans tab) - real, GET /admin/coverage/reconditioning-load-by-flight.
+  const [flightLoad, setFlightLoad] = useState<CoverageLoadByFlightResponse | null>(null);
+  const [flightLoadLoading, setFlightLoadLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setFlightLoadLoading(true);
+    getCoverageLoadByFlight(accessToken)
+      .then(setFlightLoad)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setFlightLoadLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -2747,61 +2763,62 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 ))}
               </div>
 
-              {/* Workload by Flight */}
-              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              {/* Workload by Flight - real, GET /admin/coverage/reconditioning-load-by-flight.
+                  Only real reconditioning-load columns are shown; "PT/Wk",
+                  "OFT Lanes", and "Capacity" from the old mock have no real
+                  data source anywhere in the backend (see the service
+                  method's own docstring) and are not approximated. */}
+              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">Workload by flight</h3>
-                    <MockItemBadge />
                   </div>
-                  <p className="text-[10px] text-slate-500">PT sessions, OFT lanes, reconditioning count &middot; week of 27 Jul</p>
+                  <p className="text-[10px] text-slate-500">Active reconditioning caseload by flight</p>
                   <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase">
-                    k&ge;5
+                    k&ge;{flightLoad?.min_cohort_size ?? "—"}
                   </span>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Flight</th>
-                        <th className="pb-3 text-right">Airmen</th>
-                        <th className="pb-3 text-right">PT / Wk</th>
-                        <th className="pb-3 text-right">OFT Lanes</th>
-                        <th className="pb-3 text-right">Rehab</th>
-                        <th className="pb-3 text-right">Reconditioning</th>
-                        <th className="pb-3 text-right">Capacity</th>
-                        <th className="pb-3 w-1/4 text-right">Load</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { fl: "Alpha", air: "38", pt: "10", oft: "2/3", rehab: "3", cond: "2", cap: "12", pct: "80%", col: "bg-emerald-500" },
-                        { fl: "Bravo", air: "42", pt: "11", oft: "2/3", rehab: "2", cond: "2", cap: "12", pct: "75%", col: "bg-amber-500" },
-                        { fl: "Charlie", air: "32", pt: "7", oft: "1/1", rehab: "1", cond: "1", cap: "8", pct: "60%", col: "bg-emerald-500" },
-                        { fl: "Total", air: "112", pt: "28", oft: "5/7", rehab: "6", cond: "5", cap: "32", pct: "70%", col: "bg-[var(--brand-color)]", bold: true }
-                      ].map((row, idx) => (
-                        <tr key={idx} className={`hover:bg-slate-50/20 transition ${row.bold ? "font-bold text-slate-800 dark:text-white" : ""}`}>
-                          <td className="py-3 font-bold">{row.fl}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.air}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.pt}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.oft}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.rehab}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.cond}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.cap}</td>
-                          <td className="py-3 text-right">
-                            <div className="flex items-center justify-end gap-2 font-mono text-[10px]">
-                              <span>{row.pct}</span>
-                              <div className="w-20 h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${row.col}`} style={{ width: row.pct }}></div>
-                              </div>
-                            </div>
-                          </td>
+                {flightLoadLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading flight workload…</p>
+                ) : !flightLoad || flightLoad.flights.length === 0 ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">
+                    No flights currently meet the cohort minimum (k≥{flightLoad?.min_cohort_size ?? 5}) for this view.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <th className="pb-3">Flight</th>
+                          <th className="pb-3 text-right">Airmen</th>
+                          <th className="pb-3 text-right">Active Reconditioning</th>
+                          <th className="pb-3 w-1/3 text-right">Load</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                        {flightLoad.flights.map((row) => (
+                          <tr key={row.flight_id} className="hover:bg-slate-50/20 transition">
+                            <td className="py-3 font-bold">{row.flight_name}</td>
+                            <td className="py-3 text-right font-mono text-slate-500">{row.cohort_size}</td>
+                            <td className="py-3 text-right font-mono text-slate-500">{row.active_reconditioning_count}</td>
+                            <td className="py-3 text-right">
+                              <div className="flex items-center justify-end gap-2 font-mono text-[10px]">
+                                <span>{row.load_pct}%</span>
+                                <div className="w-20 h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${row.load_pct >= 75 ? "bg-amber-500" : "bg-emerald-500"}`}
+                                    style={{ width: `${row.load_pct}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* SCS Availability Matrix */}
