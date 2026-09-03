@@ -1094,6 +1094,12 @@ export async function markIdmtHandoffTransmitted(accessToken: string, handoffId:
   });
 }
 
+export async function acknowledgeIdmtHandoff(accessToken: string, handoffId: string) {
+  return request<Record<string, unknown>>(accessToken, `/admin/idmt-handoffs/${handoffId}/acknowledge`, {
+    method: "POST",
+  });
+}
+
 export async function downloadIdmtHandoffSummary(accessToken: string, handoffId: string) {
   const response = await fetch(buildUrl(`/admin/idmt-handoffs/${handoffId}/download`), {
     headers: {
