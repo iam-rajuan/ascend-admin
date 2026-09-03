@@ -2272,46 +2272,64 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* 4 Cards Grid */}
+              {/* 4 Cards Grid - real, same GET /dashboard/scs data. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {[
-                  { name: "Active airmen", count: "112", desc: "+4 this month", icon: "green" },
-                  { name: "Needs review", count: "14", desc: "+3 since Mon", icon: "orange" },
-                  { name: "L4+ flagged", count: "3", desc: "Review before 11:00", icon: "red" },
-                  { name: "Reconditioning", count: "5", desc: "2 awaiting review", icon: "slate" }
+                  {
+                    name: "Active airmen",
+                    count: String(scsDashboard?.assigned_count ?? 0),
+                    desc: "Assigned to SCS",
+                    icon: "green",
+                  },
+                  {
+                    name: "Needs review",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                    desc: "Active risk flag",
+                    icon: "orange",
+                  },
+                  {
+                    name: "L4+ flagged",
+                    count: String(
+                      (scsDashboard?.operators ?? []).filter((o) => o.driver_flag === "L4" || o.driver_flag === "L5").length
+                    ),
+                    desc: "Highest escalation level",
+                    icon: "red",
+                  },
+                  {
+                    name: "Reconditioning",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                    desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                    icon: "slate",
+                  },
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <MockItemBadge />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.icon === "green" ? "text-emerald-500" :
-                        card.icon === "orange" ? "text-amber-500" :
-                        card.icon === "red" ? "text-rose-500" : "text-[var(--brand-color)]"
-                      }`}>
-                        {card.desc.split(" since ")[0].split(" this ")[0].split(" before ")[0].split(" awaiting ")[0]}
-                      </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                   </div>
                 ))}
               </div>
 
-              {/* People Table */}
-              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                
+              {/* People Table - real, GET /dashboard/scs operators.
+                  "Confidence", "Plan", and "Last Contact" from the old mock
+                  have no real per-operator source in this payload and are
+                  dropped rather than fabricated. */}
+              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
+
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                    <MockItemBadge />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Roster · {scsDashboard?.assigned_count ?? 0}
+                    </h3>
                   </div>
-                  <p className="text-[10px] text-slate-500">Sorted by severity then confidence</p>
+                  <p className="text-[10px] text-slate-500">Sorted by OPS score, lowest first</p>
 
                   <div className="flex gap-2">
-                    {["Needs review", "OFT", "Reconditioning", "L4+", "All 112"].map((fPill, idx) => (
+                    {["Needs review", "OFT", "Reconditioning", "L4+", "All"].map((fPill, idx) => (
                       <button
                         key={idx}
                         onClick={() => { setPeopleQueueFilter(fPill); triggerToast(`Filtering roster by: ${fPill}`); }}
@@ -2327,96 +2345,90 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">Airman</th>
-                        <th className="pb-3">Driver</th>
-                        <th className="pb-3 text-right">Last Ops</th>
-                        <th className="pb-3">Confidence</th>
-                        <th className="pb-3">Plan</th>
-                        <th className="pb-3">Last Contact</th>
-                        <th className="pb-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { code: "J. Reyes", details: "SrA · Alpha", dr: "L4 · Pain - lower back", drCol: "red", ops: "54 \u25bc 8", opsCol: "red", conf: "High", plan: "Rehab Block 2", date: "28 Jul" },
-                        { code: "A. Mendez", details: "A1C · Bravo", dr: "Sleep · 5 nights", drCol: "badge-orange", ops: "62 \u25bc 3", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                        { code: "T. Cho", details: "SSgt · Alpha", dr: "OFT · clearance", drCol: "badge-teal", ops: "68 \u25b2 2", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                        { code: "B. Ndiaye", details: "A1C · Charlie", dr: "Mobility", drCol: "badge-teal", ops: "71 \u25b2 4", opsCol: "green", conf: "High", plan: "Reconditioning", date: "26 Jul" },
-                        { code: "K. Patel", details: "A1C · Bravo", dr: "Load mgmt", drCol: "badge-orange", ops: "66 \u2014 0", opsCol: "slate", conf: "High", plan: "OFT Tempo Prep", date: "28 Jul" },
-                        { code: "M. Hayes", details: "SrA · Alpha", dr: "Cycle 4", drCol: "badge-teal", ops: "74 \u25b2 1", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                        { code: "D. Okafor", details: "SSgt · Charlie", dr: "L3 · hip", drCol: "orange", ops: "58 \u25bc 5", opsCol: "red", conf: "Medium", plan: "Hip Recond.", date: "25 Jul" },
-                        { code: "R. Singh", details: "SrA · Bravo", dr: "Profile · exempt", drCol: "badge-slate", ops: "70 \u2014 1", opsCol: "slate", conf: "Medium", plan: "Mobility Reset", date: "24 Jul" },
-                        { code: "S. Bauer", details: "A1C · Alpha", dr: "Sleep · 3 nights", drCol: "badge-orange", ops: "64 \u25bc 2", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                        { code: "L. Soto", details: "SSgt · Charlie", dr: "L2 · shoulder", drCol: "orange", ops: "69 \u25b2 3", opsCol: "green", conf: "High", plan: "Upper Recond.", date: "26 Jul" }
-                      ].filter((row) => matchesQueuePill(peopleQueueFilter, row)).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-3">
-                            <span className="font-bold text-slate-800 dark:text-white block">{row.code}</span>
-                            <span className="text-[10px] text-slate-500 font-medium block mt-0.5">{row.details}</span>
-                          </td>
-                          <td className="py-3">
-                            {row.drCol === "red" && <span className="font-bold text-rose-500">{row.dr}</span>}
-                            {row.drCol === "orange" && <span className="font-bold text-amber-500">{row.dr}</span>}
-                            {row.drCol.startsWith("badge-") && (
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                row.drCol === "badge-teal" ? "bg-cyan-500/10 text-cyan-600" :
-                                row.drCol === "badge-orange" ? "bg-amber-500/10 text-amber-600" : "bg-slate-100 text-slate-500"
-                              }`}>
-                                {row.dr}
-                              </span>
-                            )}
-                          </td>
-                          <td className={`py-3 text-right font-mono font-bold ${
-                            row.opsCol === "red" ? "text-rose-500" :
-                            row.opsCol === "green" ? "text-emerald-500" : "text-slate-500"
-                          }`}>{row.ops}</td>
-                          <td className="py-3">
-                            <span className="inline-flex items-center gap-1.5 font-bold">
-                              <span className={`size-1.5 rounded-full ${
-                                row.conf === "High" ? "bg-emerald-500" : "bg-amber-500"
-                              }`}></span>
-                              {row.conf}
-                            </span>
-                          </td>
-                          <td className="py-3 text-slate-700 dark:text-slate-300">{row.plan}</td>
-                          <td className="py-3 text-slate-500 font-mono">{row.date}</td>
-                          <td className="py-3 text-right">
-                            <button
-                              onClick={() => {
-                                setReviewingAirmanId(row.code);
-                                triggerToast(`Opening roster file context for ${row.code}`);
-                              }}
-                              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                            >
-                              Open
-                            </button>
-                          </td>
+                {scsDashboardLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading roster…</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <th className="pb-3 w-1/4">Airman</th>
+                          <th className="pb-3">Driver</th>
+                          <th className="pb-3 text-right">OPS</th>
+                          <th className="pb-3">OFT status</th>
+                          <th className="pb-3">Checked in</th>
+                          <th className="pb-3 text-right">Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination */}
-                <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-white/5">
-                  <span className="text-[10px] text-slate-500 font-mono">1&mdash;10 of 14</span>
-                  <div className="flex items-center gap-1">
-                    <button aria-label="Previous page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-400 rounded hover:bg-slate-50">&lt;</button>
-                    <button aria-label="Page 1" aria-current="page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/10 text-[10px] text-[var(--brand-color)] font-bold rounded bg-[var(--brand-color)]/10">1</button>
-                    <button aria-label="Page 2" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 rounded hover:bg-slate-50">2</button>
-                    <button aria-label="Next page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 rounded hover:bg-slate-50">&gt;</button>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                        {(scsDashboard?.operators ?? [])
+                          .filter((row) => {
+                            switch (peopleQueueFilter) {
+                              case "OFT":
+                                return ["scheduled", "no_record", "not_current"].includes(row.oft_status);
+                              case "Reconditioning":
+                                return row.reconditioning_active;
+                              case "L4+":
+                                return row.driver_flag === "L4" || row.driver_flag === "L5";
+                              case "All":
+                                return true;
+                              case "Needs review":
+                              default:
+                                return !!row.active_risk_flag;
+                            }
+                          })
+                          .sort((a, b) => (a.current_ops_score ?? 999) - (b.current_ops_score ?? 999))
+                          .map((row) => (
+                            <tr key={row.user_id} className="hover:bg-slate-50/20 transition">
+                              <td className="py-3">
+                                <span className="font-bold text-slate-800 dark:text-white block">{row.user_name}</span>
+                              </td>
+                              <td className="py-3">
+                                {row.active_risk_flag ? (
+                                  <span className="font-bold text-rose-500">
+                                    {row.driver_flag ? `${row.driver_flag} · ` : ""}{row.active_risk_flag}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+                              <td className={`py-3 text-right font-mono font-bold ${
+                                row.current_ops_score !== null && row.current_ops_score < 55 ? "text-rose-500" : "text-slate-500"
+                              }`}>
+                                {row.current_ops_score ?? "—"}
+                              </td>
+                              <td className="py-3 text-slate-700 dark:text-slate-300">{row.oft_status.replace("_", " ")}</td>
+                              <td className="py-3">
+                                <span className={`inline-flex items-center gap-1.5 font-bold ${row.checked_in_today ? "text-emerald-500" : "text-slate-400"}`}>
+                                  <span className={`size-1.5 rounded-full ${row.checked_in_today ? "bg-emerald-500" : "bg-slate-400"}`}></span>
+                                  {row.checked_in_today ? "Yes" : "No"}
+                                </span>
+                              </td>
+                              <td className="py-3 text-right">
+                                <button
+                                  onClick={() => {
+                                    setReviewingAirmanId(row.user_name);
+                                    triggerToast(`Opening roster file context for ${row.user_name}`);
+                                  }}
+                                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                                >
+                                  Open
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
+                )}
 
               </div>
-
               {/* Footer */}
               <div className="pt-2 flex justify-between items-center text-[10px] font-mono text-slate-400">
-                <span>14 flagged of 112 assigned &middot; k=1 drill-in is audit logged</span>
+                <span>
+                  {(scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length} flagged of{" "}
+                  {scsDashboard?.assigned_count ?? 0} assigned &middot; k=1 drill-in is audit logged
+                </span>
                 <button type="button" className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline" onClick={() => setActiveTab("coverage")}>Coverage &rarr;</button>
               </div>
 
