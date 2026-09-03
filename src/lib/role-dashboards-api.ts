@@ -266,6 +266,31 @@ export type PtimDashboardData = {
   operators: Array<Record<string, unknown>>;
 };
 
+// Real shape from provider_dashboard_service.get_specialist_dashboard -
+// shared by Nutritionist/Mental Performance/Chaplain, NOT the same shape
+// as PtimDashboardData above (this dashboard has no
+// active_reconditioning_count/pending_review_total fields).
+export type SpecialistDashboardData = {
+  pathway_key: string;
+  relevant_readiness_component: string | null;
+  assigned_count: number;
+  open_request_count: number;
+  low_consistency_operator_count: number | null;
+  operators: Array<Record<string, unknown>>;
+  notes: Array<Record<string, unknown>>;
+  recent_requests: Array<Record<string, unknown>>;
+};
+
+// Real shape from provider_dashboard_service.get_mental_driver_scores -
+// Mental Performance-only, k-gated cohort aggregate.
+export type MentalDriverScoresResponse = {
+  cohort_size: number;
+  cohort_k: number;
+  window_days: number;
+  suppressed: boolean;
+  drivers: Record<string, number | null> | null;
+};
+
 export type ActiveRecommendationsResponse = {
   recommendations?: Array<Record<string, unknown>>;
 } | null;
@@ -845,6 +870,14 @@ export async function sendGroupMessage(accessToken: string, threadId: string, bo
 
 export async function getPtimDashboard(accessToken: string) {
   return request<PtimDashboardData>(accessToken, "/dashboard/ptim");
+}
+
+export async function getSpecialistDashboard(accessToken: string) {
+  return request<SpecialistDashboardData>(accessToken, "/dashboard/specialist");
+}
+
+export async function getMentalDriverScores(accessToken: string) {
+  return request<MentalDriverScoresResponse>(accessToken, "/dashboard/mp/mental-drivers");
 }
 
 export async function listUploadedRecords(accessToken: string, documentType = "all") {
