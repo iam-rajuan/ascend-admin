@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import {
@@ -114,6 +115,7 @@ function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
 }
 
 export function NutritionistView({ activeTab = "dashboard" }: { activeTab?: TabType }) {
+  const router = useRouter();
   const accessToken = useAuthStore((state) => state.accessToken);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const isHydrated = useAuthStore((state) => state.isHydrated);
@@ -176,21 +178,44 @@ export function NutritionistView({ activeTab = "dashboard" }: { activeTab?: TabT
   const recentRequests = (dashboard?.recent_requests as SupportRequestRow[] | undefined) ?? [];
   const operatorNameById = new Map(operators.map((o) => [o.user_id, o.user_name]));
 
+  // Real "today" count derived from real request timestamps - not a
+  // separate fabricated metric, just recentRequests filtered to today.
+  const todayKey = new Date().toDateString();
+  const consultsToday = recentRequests.filter((r) => new Date(r.created_at).toDateString() === todayKey).length;
+
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Nutrition Performance</p>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Nutritionist Dashboard</h1>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Nutrition consultations, dietary plans, and clinical records.</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Nutrition · Today&apos;s Consult Queue</p>
+          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Today&apos;s consult queue</h1>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {consultsToday} consult{consultsToday === 1 ? "" : "s"} today · {formatNumber(dashboard?.assigned_count)} assigned operators · k≥5 cohort view.
+          </p>
         </div>
-        <button
-          onClick={() => void refreshAll()}
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-          type="button"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void refreshAll()}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+            type="button"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => router.push("/dashboard/nutritionist/records")}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+            type="button"
+          >
+            Open records
+          </button>
+          <button
+            onClick={() => router.push("/dashboard/nutritionist/consults")}
+            className="rounded-xl bg-[var(--brand-color)] px-4 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
+            type="button"
+          >
+            Open consult queue
+          </button>
+        </div>
       </div>
 
       {activeTab === "dashboard" && (
