@@ -3359,7 +3359,10 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 {/* Left Side: Inbox search list - real, GET /messaging/threads. */}
                 <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
+                      <MockItemBadge />
+                    </div>
                     <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-600 text-[8.5px] font-bold rounded-full uppercase tracking-wider font-mono">
                       {threads.reduce((sum, t) => sum + t.unread_count, 0)} unread
                     </span>
