@@ -441,7 +441,7 @@ export function SystemView({
             <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-white">Permissions panel</h3>
               <p className="text-[10px] text-slate-500 mt-0.5">
-                Expired access · Purpose consent · protected roles · aggregate-only scope
+                Provider workload · expired access · Purpose consent · protected roles · aggregate-only scope
               </p>
             </div>
             <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase">
@@ -449,7 +449,23 @@ export function SystemView({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-xs leading-normal">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-xs leading-normal">
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Assigned</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.provider_workload.assigned_count} active
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                Providers serving at least one operator, of {accountsSummary.provider_workload.total_provider_count} total.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Unassigned</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.provider_workload.unassigned_count}
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Provider-role accounts currently serving nobody.</p>
+            </div>
             <div className="space-y-1">
               <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Expired</span>
               <p className="font-bold text-slate-800 dark:text-white tabular-nums">

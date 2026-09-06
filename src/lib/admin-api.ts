@@ -130,6 +130,11 @@ export type AdminAccountsOnboardingSummary = {
   assigned_providers: {
     always_available_pathways: string[];
   };
+  provider_workload: {
+    assigned_count: number;
+    unassigned_count: number;
+    total_provider_count: number;
+  };
   effective_permissions: {
     note: string;
   };
