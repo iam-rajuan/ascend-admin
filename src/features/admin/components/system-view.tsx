@@ -75,6 +75,8 @@ export function SystemView({
   const roleProtectionCount = adminStore.roleCatalogRaw.filter(
     (role) => role.cluster === "Officer" || role.cluster === "System",
   ).length;
+  const accountsSummary = adminStore.accountsSummary;
+  const leadershipScopeRow = adminStore.scopeMatrix.find((row) => row.role === "Leadership");
   const questionVersionCount = adminStore.questionBankVersions.length;
   const questionTotal = questionRegistry?.total_questions ?? systemOverview?.question_bank?.total_questions ?? 0;
   const totalUtilizationEvents = adminStore.utilizationEvents.length;
@@ -431,6 +433,54 @@ export function SystemView({
           </table>
         </div>
       </div>
+
+      {/* 6. Permissions Panel */}
+      {accountsSummary && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Permissions panel</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Expired access · Purpose consent · protected roles · aggregate-only scope
+              </p>
+            </div>
+            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase">
+              Live
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-xs leading-normal">
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Expired</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.access_expiration.expired_count}
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Accounts past access expiration.</p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Purpose consent</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.purpose_consent.active_count} active · {accountsSummary.purpose_consent.withdrawn_count} withdrawn
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                Chaplain / Purpose pathway only - the one opt-in, revocable consent this backend tracks.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Admin &amp; protected roles</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">{roleProtectionCount}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Officer/System-tier roles - changes require 2nd-reviewer sign-off.</p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Aggregate only</span>
+              <p className="font-bold text-slate-800 dark:text-white">
+                {leadershipScopeRow ? `Leadership · ${leadershipScopeRow.aggregate_wing}` : "—"}
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Cohort minimum enforced - no individual-level scores.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Operational Queues Panel */}
       <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-4">
