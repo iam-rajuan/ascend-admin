@@ -332,6 +332,55 @@ export function ExportsView({
         </div>
       </div>
 
+      {/* Required Contract Reports Table */}
+      {adminStore.requiredReports.length > 0 && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+              {adminStore.requiredReports.length} required contract reports
+            </h3>
+            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[9px] font-bold rounded uppercase">
+              {adminStore.requiredReports.filter((r) => r.ever_generated).length} of {adminStore.requiredReports.length} generated at least once
+            </span>
+          </div>
+
+          <div className="overflow-x-auto text-xs">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-slate-400 border-b border-slate-100 dark:border-white/5">
+                  <th className="pb-3 font-semibold">Report</th>
+                  <th className="pb-3 font-semibold">Primary users</th>
+                  <th className="pb-3 font-semibold">Generated</th>
+                  <th className="pb-3 font-semibold">Last generated</th>
+                  <th className="pb-3 font-semibold">Last status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                {adminStore.requiredReports.map((report) => (
+                  <tr key={report.report_type} className="align-middle">
+                    <td className="py-3 font-bold text-slate-800 dark:text-white">{report.docx_name}</td>
+                    <td className="py-3 text-slate-500 dark:text-slate-400 max-w-xs">{report.primary_users}</td>
+                    <td className="py-3">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase select-none ${
+                          report.ever_generated ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"
+                        }`}
+                      >
+                        {report.ever_generated ? "Yes" : "Never"}
+                      </span>
+                    </td>
+                    <td className="py-3 text-slate-500">
+                      {report.last_generated_at ? formatAdminDate(report.last_generated_at, true) : "—"}
+                    </td>
+                    <td className="py-3 text-slate-500">{report.last_export_status ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* EXPORT CONFIRM BOTTOM BAR */}
       {showConfirmExportBar && (
         <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] text-white p-4 border-t border-slate-800 flex items-center justify-between z-40 animate-slide-up shadow-2xl">
