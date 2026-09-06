@@ -891,6 +891,32 @@ export async function getAdminSystemOverview(accessToken: string) {
   return request<AdminSystemOverview>(accessToken, "/admin/system/overview");
 }
 
+export type AdminPrsQcpProviderRow = {
+  provider_id: string;
+  provider_name: string | null;
+  role: string;
+  logged_hours: number;
+  rsd_hours: number;
+  target_hours: number;
+  coverage_pct: number;
+  meets_95pct_evidence: boolean;
+};
+
+export type AdminPrsQcpReport = {
+  year: number;
+  providers: AdminPrsQcpProviderRow[];
+  assessment_compliance: Record<string, unknown>;
+  rsd_coverage: {
+    year: number;
+    total_rsd_hours: number;
+    session_count: number;
+  };
+};
+
+export async function getAdminPrsQcpReport(accessToken: string) {
+  return request<AdminPrsQcpReport>(accessToken, "/admin/reports/prs_qcp");
+}
+
 export async function createAdminScoringConfig(
   accessToken: string,
   payload: {

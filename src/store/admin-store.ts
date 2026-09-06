@@ -24,6 +24,7 @@ import {
   getAdminScopeMatrix,
   getAdminSystemDiagnostics,
   getAdminTrainingComplianceSummary,
+  getAdminPrsQcpReport,
   getAdminSystemOverview,
   getAdminUtilizationEvents,
   type AdminAccountsOnboardingSummary,
@@ -49,6 +50,7 @@ import {
   type AdminScopeResolveResponse,
   type AdminSystemDiagnostics,
   type AdminTrainingComplianceSummary,
+  type AdminPrsQcpReport,
   type AdminSystemOverview,
   type AdminUtilizationEvent,
   resolveAdminScope,
@@ -152,6 +154,7 @@ export type AdminStore = {
   systemOverview: AdminSystemOverview | null;
   systemDiagnostics: AdminSystemDiagnostics | null;
   trainingComplianceSummary: AdminTrainingComplianceSummary | null;
+  prsQcpReport: AdminPrsQcpReport | null;
   orgUnits: AdminOrgUnit[];
   credentials: AdminCredential[];
   equipmentGaps: AdminEquipmentGap[];
@@ -408,6 +411,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
   systemOverview: null,
   systemDiagnostics: null,
   trainingComplianceSummary: null,
+  prsQcpReport: null,
   orgUnits: [],
   credentials: [],
   equipmentGaps: [],
@@ -511,6 +515,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         systemOverview,
         systemDiagnostics,
         trainingComplianceSummary,
+        prsQcpReport,
         orgUnits,
         credentials,
         equipmentGaps,
@@ -534,6 +539,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         getAdminSystemOverview(accessToken),
         getAdminSystemDiagnostics(accessToken),
         getAdminTrainingComplianceSummary(accessToken),
+        getAdminPrsQcpReport(accessToken),
         getAdminOrgUnits(accessToken),
         getAdminCredentials(accessToken),
         getAdminEquipmentGaps(accessToken),
@@ -569,6 +575,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         systemOverview,
         systemDiagnostics,
         trainingComplianceSummary,
+        prsQcpReport,
         orgUnits: orgUnits.units,
         credentials: credentials.credentials,
         equipmentGaps: equipmentGaps.gaps,

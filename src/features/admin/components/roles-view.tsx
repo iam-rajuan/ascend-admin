@@ -574,6 +574,11 @@ export function RolesView({
               <p className="text-[10px] text-slate-500 mt-0.5">
                 O1–O20 + D1–D6 + W1–W10 + M1–M10 = {questionRegistry.total_questions} · versioned · scoring direction · routing · provider flag
               </p>
+              {adminStore.systemOverview?.reverse_scoring_status && (
+                <p className="text-[10px] text-slate-400 mt-1 max-w-2xl">
+                  Reverse-scoring: {adminStore.systemOverview.reverse_scoring_status}
+                </p>
+              )}
             </div>
             <span
               className={`px-2 py-0.5 text-[9px] font-bold rounded uppercase whitespace-nowrap ${

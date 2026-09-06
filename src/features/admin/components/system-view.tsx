@@ -84,6 +84,25 @@ export function SystemView({
   const activeQuestionBankVersion = adminStore.questionBankVersions.find((v) => !v.retired_date) ?? null;
   const thresholdRuleCount = thresholdRules ? Object.keys(thresholdRules).length : 0;
   const trainingCompliance = adminStore.trainingComplianceSummary;
+  const prsQcpReport = adminStore.prsQcpReport;
+  // The mock's "Corrective Action" and "Weekly coverage" tiles have no
+  // backend equivalent - reports_service.get_prs_qcp_report's own
+  // docstring says corrective actions/issue categories are "not tracked
+  // anywhere in this backend" - dropped rather than fabricated.
+  const scsRows = (prsQcpReport?.providers ?? []).filter((p) => p.role === "SCS");
+  const ptimRows = (prsQcpReport?.providers ?? []).filter((p) => p.role === "PT/IM");
+  const sumHours = (rows: typeof scsRows) => rows.reduce((sum, r) => sum + r.logged_hours, 0);
+  const scsLoggedHours = sumHours(scsRows);
+  const scsTargetHours = scsRows[0]?.target_hours ?? 2080;
+  const scsProviderCount = scsRows.length;
+  const scsMeeting95pct = scsRows.filter((r) => r.meets_95pct_evidence).length;
+  const ptimLoggedHours = sumHours(ptimRows);
+  const ptimTargetHours = ptimRows[0]?.target_hours ?? 512;
+  const ptimProviderCount = ptimRows.length;
+  const ptimMeeting95pct = ptimRows.filter((r) => r.meets_95pct_evidence).length;
+  const totalMeeting95pct = scsMeeting95pct + ptimMeeting95pct;
+  const totalProviderCount = scsProviderCount + ptimProviderCount;
+  const overallCoveragePct = totalProviderCount ? (totalMeeting95pct / totalProviderCount) * 100 : 0;
   const totalUtilizationEvents = adminStore.utilizationEvents.length;
   const usedUtilizationEvents = adminStore.utilizationEvents.filter((event) => event.actual_use).length;
   const averageAttendance = totalUtilizationEvents
@@ -536,6 +555,57 @@ export function SystemView({
                 {leadershipScopeRow ? `Leadership · ${leadershipScopeRow.aggregate_wing}` : "—"}
               </p>
               <p className="text-[10px] text-slate-500 leading-normal">Cohort minimum enforced - no individual-level scores.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Hours Tracking - Contract Targets */}
+      {prsQcpReport && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Hours tracking - contract targets</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                SCS &ge; {scsTargetHours.toLocaleString()}h/yr · PT/IM &ge; {ptimTargetHours.toLocaleString()}h/yr · 95% coverage evidence · RSD tracked separately
+              </p>
+            </div>
+            <span
+              className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${
+                overallCoveragePct >= 95 ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"
+              }`}
+            >
+              {overallCoveragePct.toFixed(0)}% coverage
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-xs leading-normal">
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">SCS YTD</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {scsLoggedHours.toLocaleString()} / {scsTargetHours.toLocaleString()}
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {scsProviderCount} providers - {scsMeeting95pct} meeting 95% evidence.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">PT/IM YTD</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {ptimLoggedHours.toLocaleString()} / {ptimTargetHours.toLocaleString()}
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {ptimProviderCount} providers - {ptimMeeting95pct} meeting 95% evidence.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">RSD coverage (caseload)</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {prsQcpReport.rsd_coverage.total_rsd_hours.toLocaleString()}h
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {prsQcpReport.rsd_coverage.session_count} sessions - {prsQcpReport.year}, tracked separately from regular hours.
+              </p>
             </div>
           </div>
         </div>
