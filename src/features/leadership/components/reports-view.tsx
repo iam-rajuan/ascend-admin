@@ -73,6 +73,16 @@ export function ReportsView() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const [reportsFilter, setReportsFilter] = useState("All");
   const [showNewReportModal, setShowNewReportModal] = useState(false);
+  const [newReportStep, setNewReportStep] = useState<"form" | "confirm">("form");
+  const [newReportTitle, setNewReportTitle] = useState("");
+  const [newReportTemplateKey, setNewReportTemplateKey] = useState("");
+
+  const closeNewReportModal = () => {
+    setShowNewReportModal(false);
+    setNewReportStep("form");
+    setNewReportTitle("");
+    setNewReportTemplateKey("");
+  };
 
   if (loading) {
     return <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-white/5 dark:bg-[#0e1628]">Loading live reports library...</div>;
@@ -258,50 +268,119 @@ export function ReportsView() {
         </div>
       </Card>
 
-      {showNewReportModal && (
-        <AccessibleDialog open={showNewReportModal} onClose={() => setShowNewReportModal(false)} titleId="new-report-title">
+      {showNewReportModal && newReportStep === "form" && (
+        <AccessibleDialog open={showNewReportModal} onClose={closeNewReportModal} titleId="new-report-title">
           <div className="space-y-4">
             <h3 id="new-report-title" className="text-base font-bold text-slate-900 dark:text-white">New report</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Pick a real template - using one creates a live recurring schedule immediately.</p>
-            <div className="space-y-3">
-              {reportTemplates.map((template) => (
-                <div key={template.key} className="rounded-xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white">{template.title}</p>
-                      <p className="mt-1 text-[10px] text-slate-500">{template.report_type} · {template.cadence} · {template.export_format.toUpperCase()}</p>
-                    </div>
-                    <button
-                      onClick={async () => {
-                        if (!accessToken) return;
-                        setIsMutating(true);
-                        try {
-                          await useLeadershipReportTemplate(accessToken, template.key);
-                          setShowNewReportModal(false);
-                          await refreshData(`${template.title} template created a live schedule.`);
-                        } catch (nextError) {
-                          triggerToast(getApiErrorMessage(nextError));
-                        } finally {
-                          setIsMutating(false);
-                        }
-                      }}
-                      disabled={isMutating}
-                      className="rounded-lg bg-[var(--brand-color)] px-3 py-1.5 text-[10px] font-bold text-white disabled:opacity-50 cursor-pointer"
-                      type="button"
-                    >
-                      Use
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {reportTemplates.length === 0 && <p className="text-xs text-slate-400">No report templates are configured yet.</p>}
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Configure an aggregate export. k ≥ {trends?.band_distribution.min_cohort_size ?? 5} is enforced.
+            </p>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Title</label>
+                <input
+                  type="text"
+                  value={newReportTitle}
+                  onChange={(e) => setNewReportTitle(e.target.value)}
+                  placeholder="e.g. Wing Weekly OPS"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-800 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Type</label>
+                <select
+                  value={newReportTemplateKey}
+                  onChange={(e) => setNewReportTemplateKey(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-slate-800 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                >
+                  <option value="">Select a real template...</option>
+                  {reportTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>
+                      {template.title} ({template.report_type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Scope</label>
+                <p className="mt-1 rounded-xl border border-slate-100 bg-slate-50 p-2.5 text-slate-500 dark:border-white/5 dark:bg-slate-900/50">Organization - aggregate only</p>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Period</label>
+                <p className="mt-1 rounded-xl border border-slate-100 bg-slate-50 p-2.5 text-slate-500 dark:border-white/5 dark:bg-slate-900/50">
+                  {newReportTemplateKey ? `Recurs ${reportTemplates.find((t) => t.key === newReportTemplateKey)?.cadence}` : "Set by the selected type"}
+                </p>
+              </div>
             </div>
-            <button onClick={() => setShowNewReportModal(false)} className="w-full rounded-xl border border-slate-200 py-2 text-xs font-semibold hover:bg-slate-50 dark:border-white/10 dark:hover:bg-slate-800 cursor-pointer" type="button">
-              Close
-            </button>
+            <div className="flex gap-3 pt-2">
+              <button onClick={closeNewReportModal} className="flex-1 rounded-xl border border-slate-200 py-2 text-xs font-semibold hover:bg-slate-50 dark:border-white/10 dark:hover:bg-slate-800 cursor-pointer" type="button">
+                Cancel
+              </button>
+              <button
+                onClick={() => setNewReportStep("confirm")}
+                disabled={!newReportTemplateKey}
+                className="flex-1 rounded-xl bg-[var(--brand-color)] py-2 text-xs font-bold text-white disabled:opacity-50 cursor-pointer"
+                type="button"
+              >
+                Create report
+              </button>
+            </div>
           </div>
         </AccessibleDialog>
       )}
+
+      {showNewReportModal && newReportStep === "confirm" && (() => {
+        const template = reportTemplates.find((t) => t.key === newReportTemplateKey);
+        if (!template) return null;
+        const finalTitle = newReportTitle.trim() || template.title;
+        return (
+          <AccessibleDialog open={showNewReportModal} onClose={closeNewReportModal} titleId="use-template-title">
+            <div className="space-y-4">
+              <h3 id="use-template-title" className="text-base font-bold text-slate-900 dark:text-white">{finalTitle}</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{template.report_type} · real recurring schedule</p>
+              <div className="space-y-3 rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs dark:border-white/5 dark:bg-slate-900/50">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold uppercase tracking-wider text-slate-400">Category</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white">{template.cadence.toUpperCase()}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold uppercase tracking-wider text-slate-400">Period</span>
+                  <span className="font-bold text-slate-700 dark:text-slate-200">Recurs {template.cadence}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold uppercase tracking-wider text-slate-400">Detail</span>
+                  <span className="font-bold text-slate-700 dark:text-slate-200">{template.export_format.toUpperCase()} · Leadership</span>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setNewReportStep("form")} className="flex-1 rounded-xl border border-slate-200 py-2 text-xs font-semibold hover:bg-slate-50 dark:border-white/10 dark:hover:bg-slate-800 cursor-pointer" type="button">
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!accessToken) return;
+                    setIsMutating(true);
+                    try {
+                      await useLeadershipReportTemplate(accessToken, template.key, newReportTitle.trim() || undefined);
+                      closeNewReportModal();
+                      await refreshData(`${finalTitle} created a live schedule.`);
+                    } catch (nextError) {
+                      triggerToast(getApiErrorMessage(nextError));
+                    } finally {
+                      setIsMutating(false);
+                    }
+                  }}
+                  disabled={isMutating}
+                  className="flex-1 rounded-xl bg-[var(--brand-color)] py-2 text-xs font-bold text-white disabled:opacity-50 cursor-pointer"
+                  type="button"
+                >
+                  Use template
+                </button>
+              </div>
+            </div>
+          </AccessibleDialog>
+        );
+      })()}
     </div>
   );
 }

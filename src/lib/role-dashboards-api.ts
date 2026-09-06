@@ -603,9 +603,11 @@ export async function getLeadershipReportTemplates(accessToken: string) {
   return request<{ templates: LeadershipReportTemplate[] }>(accessToken, "/dashboard/leadership/report-templates");
 }
 
-export async function useLeadershipReportTemplate(accessToken: string, templateKey: string) {
+export async function useLeadershipReportTemplate(accessToken: string, templateKey: string, name?: string) {
   return request<Record<string, unknown>>(accessToken, `/dashboard/leadership/report-templates/${templateKey}/use`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(name ? { name } : {}),
   });
 }
 
