@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
+import { useAuthStore } from "@/store/auth-store";
 import {
   useAdminStore,
   ServiceStatus,
@@ -59,6 +60,7 @@ export function SystemView({
 }) {
   const router = useRouter();
   const adminStore = useAdminStore();
+  const accessToken = useAuthStore((state) => state.accessToken);
   const systemOverview = adminStore.systemOverview;
   const systemDiagnostics = adminStore.systemDiagnostics;
   const questionRegistry = adminStore.questionRegistry;
@@ -251,7 +253,16 @@ export function SystemView({
             Audit trail
           </button>
           <button
-            onClick={() => triggerToast("Initializing diagnostic sweep...")}
+            onClick={async () => {
+              if (!accessToken) return;
+              triggerToast("Running diagnostic sweep...");
+              const result = await adminStore.refreshDiagnostics(accessToken);
+              triggerToast(
+                result.ok
+                  ? "Diagnostics refreshed - services/threshold data above is current."
+                  : result.error ?? "Diagnostic sweep failed.",
+              );
+            }}
             className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color)/95] text-white rounded-xl text-xs font-semibold shadow-sm flex items-center gap-1.5 cursor-pointer"
           >
             <span className="size-1.5 rounded-full bg-emerald-500" />

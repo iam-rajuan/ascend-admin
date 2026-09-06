@@ -167,6 +167,7 @@ export type AdminStore = {
   updateRoleCount: (roleId: string, value: string) => void;
   addActivity: (entry: { action: string; actor: string; reason?: string; scope: string; tag?: ActivityItem["tag"]; tagColor?: ActivityItem["tagColor"] }) => void;
   initialize: (accessToken: string) => Promise<void>;
+  refreshDiagnostics: (accessToken: string) => Promise<{ ok: boolean; error?: string }>;
   refreshScopeResolve: (accessToken: string) => Promise<void>;
   saveAdminScopeConfig: (accessToken: string) => Promise<{ ok: boolean; error?: string }>;
   approveConfirmation: (accessToken: string, id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -580,6 +581,18 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         isLoading: false,
         loadError: formatAdminApiError(error),
       });
+    }
+  },
+  refreshDiagnostics: async (accessToken) => {
+    try {
+      const systemDiagnostics = await getAdminSystemDiagnostics(accessToken);
+      set({
+        systemDiagnostics,
+        services: toServiceStatus(systemDiagnostics),
+      });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
     }
   },
   refreshScopeResolve: async (accessToken) => {
