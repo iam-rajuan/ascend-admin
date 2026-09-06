@@ -60,6 +60,56 @@ function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   );
 }
 
+function formatMonthLabel(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value;
+  return new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "short" });
+}
+
+function HeroTrendChart({ months }: { months: Array<{ month: string; average_ops_score: number | null }> }) {
+  const points = months.filter((m) => typeof m.average_ops_score === "number");
+  if (points.length < 2) {
+    return (
+      <div className="flex h-full items-center justify-center text-[10px] text-slate-400">
+        Not enough scored months yet for a trend line - {points.length} recorded so far.
+      </div>
+    );
+  }
+  const scores = points.map((p) => p.average_ops_score as number);
+  const min = Math.min(...scores, 0);
+  const max = Math.max(...scores, 100);
+  const w = 560;
+  const h = 140;
+  const coords = points.map((p, i) => {
+    const x = points.length > 1 ? (i / (points.length - 1)) * w : 0;
+    const y = h - ((((p.average_ops_score as number) - min) / (max - min || 1)) * h);
+    return [x, y] as const;
+  });
+  const path = coords.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${path} L${w},${h} L0,${h} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h + 20}`} className="w-full" preserveAspectRatio="none">
+      <path d={area} fill="var(--brand-color)" opacity="0.08" />
+      <path d={path} fill="none" stroke="var(--brand-color)" strokeWidth="2.5" />
+      {coords.map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r={i === coords.length - 1 ? 4 : 2.5} fill="var(--brand-color)" />
+      ))}
+      {points.map((p, i) => (
+        <text
+          key={p.month}
+          x={coords[i][0]}
+          y={h + 16}
+          fontSize="10"
+          textAnchor={i === 0 ? "start" : i === points.length - 1 ? "end" : "middle"}
+          className="fill-slate-400"
+        >
+          {formatMonthLabel(p.month)}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
 function SimpleKeyValueList({ rows }: { rows: { label: string; value: string }[] }) {
   return (
     <div className="space-y-3 text-xs">
@@ -103,6 +153,50 @@ export function AggregateView() {
           </Link>
         </div>
       </div>
+
+      <Card>
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
+          <div className="flex-shrink-0 space-y-4 lg:w-64">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Composite OPS · {aggregate.hero.months.length}-month readiness
+              </p>
+              <p className="mt-1 text-[10px] text-slate-500">
+                Cohort k = {aggregate.hero.cohort_size} · {aggregate.hero.score_band || "no band"}
+              </p>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-4xl font-black text-slate-900 dark:text-white">{formatScore(aggregate.hero.average_ops_score)}</span>
+              {typeof aggregate.hero.mom_delta === "number" && (
+                <span className={`text-sm font-bold ${aggregate.hero.mom_delta >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                  {aggregate.hero.mom_delta >= 0 ? "+" : ""}
+                  {formatScore(aggregate.hero.mom_delta)}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-[10px] dark:border-white/5">
+              <div>
+                <p className="font-bold uppercase tracking-wide text-slate-400">Period</p>
+                <p className="mt-0.5 font-semibold text-slate-700 dark:text-slate-200">
+                  {aggregate.hero.months[0] ? formatMonthLabel(aggregate.hero.months[0].month) : "—"} –{" "}
+                  {aggregate.hero.months[aggregate.hero.months.length - 1]
+                    ? formatMonthLabel(aggregate.hero.months[aggregate.hero.months.length - 1].month)
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="font-bold uppercase tracking-wide text-slate-400">
+                  Target{aggregate.hero.target_is_approximated ? " (approx.)" : ""}
+                </p>
+                <p className="mt-0.5 font-semibold text-slate-700 dark:text-slate-200">{formatScore(aggregate.hero.approximate_target_score)}</p>
+              </div>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <HeroTrendChart months={aggregate.hero.months} />
+          </div>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-2 gap-5 lg:grid-cols-4">
         <MetricCard title="Hero cohort" value={aggregate.hero.cohort_size.toString()} subtext={aggregate.hero.score_band || "No band"} />
