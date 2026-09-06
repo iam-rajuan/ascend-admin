@@ -79,6 +79,8 @@ export function SystemView({
   ).length;
   const accountsSummary = adminStore.accountsSummary;
   const leadershipScopeRow = adminStore.scopeMatrix.find((row) => row.role === "Leadership");
+  const aggregateOnlyRoles = adminStore.scopeMatrix.filter((row) => row.aggregate_wing !== "none");
+  const scopedOnlyRoleCount = adminStore.scopeMatrix.length - aggregateOnlyRoles.length;
   const questionVersionCount = adminStore.questionBankVersions.length;
   const questionTotal = questionRegistry?.total_questions ?? systemOverview?.question_bank?.total_questions ?? 0;
   const activeQuestionBankVersion = adminStore.questionBankVersions.find((v) => !v.retired_date) ?? null;
@@ -607,6 +609,54 @@ export function SystemView({
                 {prsQcpReport.rsd_coverage.session_count} sessions - {prsQcpReport.year}, tracked separately from regular hours.
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Privacy & Cohort Suppression */}
+      {adminStore.scopeMatrix.length > 0 && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Privacy &amp; cohort suppression</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Which roles get an aggregate view at all, and at what real cohort minimum - not just Leadership's.
+              </p>
+            </div>
+            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase">
+              Enforced per role
+            </span>
+          </div>
+
+          <div className="overflow-x-auto text-xs">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-slate-400 border-b border-slate-100 dark:border-white/5 uppercase text-[9px]">
+                  <th className="pb-2 font-bold">Role</th>
+                  <th className="pb-2 font-bold">Aggregate access</th>
+                  <th className="pb-2 font-bold">Cohort minimum</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                {aggregateOnlyRoles.map((row) => (
+                  <tr key={row.role}>
+                    <td className="py-2.5 font-bold text-slate-800 dark:text-white">{row.role}</td>
+                    <td className="py-2.5 text-emerald-500 font-semibold">Aggregate only - no individual scores</td>
+                    <td className="py-2.5 font-mono text-slate-600 dark:text-slate-300">{row.aggregate_wing}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 dark:border-white/5 space-y-1">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Cell suppression</span>
+            <p className="text-[10px] text-slate-500 leading-normal max-w-3xl">
+              Every aggregate above genuinely withholds a cell below its cohort minimum - never approximated or
+              merged into a neighboring group - across the injury-by-flight, injury-type, mental-driver, and
+              meal-consistency reports. The remaining {scopedOnlyRoleCount} roles have no aggregate view at all:
+              caseload or self-scoped access only.
+            </p>
           </div>
         </div>
       )}
