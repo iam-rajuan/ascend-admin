@@ -79,6 +79,8 @@ export function SystemView({
   const leadershipScopeRow = adminStore.scopeMatrix.find((row) => row.role === "Leadership");
   const questionVersionCount = adminStore.questionBankVersions.length;
   const questionTotal = questionRegistry?.total_questions ?? systemOverview?.question_bank?.total_questions ?? 0;
+  const activeQuestionBankVersion = adminStore.questionBankVersions.find((v) => !v.retired_date) ?? null;
+  const thresholdRuleCount = thresholdRules ? Object.keys(thresholdRules).length : 0;
   const totalUtilizationEvents = adminStore.utilizationEvents.length;
   const usedUtilizationEvents = adminStore.utilizationEvents.filter((event) => event.actual_use).length;
   const averageAttendance = totalUtilizationEvents
@@ -281,6 +283,18 @@ export function SystemView({
           <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Pending transmission</span>
           <span className="text-2xl font-black text-slate-800 dark:text-white">{systemOverview?.pending_transmission_count ?? 0}</span>
           <span className="text-[10px] text-slate-400 font-semibold block">live backend transmission queue</span>
+        </div>
+        <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Questions bank - active</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white tabular-nums">{questionTotal}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">
+            {activeQuestionBankVersion ? `${activeQuestionBankVersion.version_id} - ${formatCompactDate(activeQuestionBankVersion.effective_date)}` : "no version recorded"}
+          </span>
+        </div>
+        <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Threshold limits</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white tabular-nums">{thresholdRuleCount}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">{thresholdRuleCount} live-configured parameters</span>
         </div>
       </div>
 
