@@ -23,6 +23,7 @@ import {
   getAdminScopeConfigs,
   getAdminScopeMatrix,
   getAdminSystemDiagnostics,
+  getAdminTrainingComplianceSummary,
   getAdminSystemOverview,
   getAdminUtilizationEvents,
   type AdminAccountsOnboardingSummary,
@@ -47,6 +48,7 @@ import {
   type AdminScopeMatrixRow,
   type AdminScopeResolveResponse,
   type AdminSystemDiagnostics,
+  type AdminTrainingComplianceSummary,
   type AdminSystemOverview,
   type AdminUtilizationEvent,
   resolveAdminScope,
@@ -149,6 +151,7 @@ export type AdminStore = {
   exportHistory: AdminExportRecord[];
   systemOverview: AdminSystemOverview | null;
   systemDiagnostics: AdminSystemDiagnostics | null;
+  trainingComplianceSummary: AdminTrainingComplianceSummary | null;
   orgUnits: AdminOrgUnit[];
   credentials: AdminCredential[];
   equipmentGaps: AdminEquipmentGap[];
@@ -404,6 +407,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
   exportHistory: [],
   systemOverview: null,
   systemDiagnostics: null,
+  trainingComplianceSummary: null,
   orgUnits: [],
   credentials: [],
   equipmentGaps: [],
@@ -506,6 +510,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         exportHistory,
         systemOverview,
         systemDiagnostics,
+        trainingComplianceSummary,
         orgUnits,
         credentials,
         equipmentGaps,
@@ -528,6 +533,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         getAdminExportLogHistory(accessToken),
         getAdminSystemOverview(accessToken),
         getAdminSystemDiagnostics(accessToken),
+        getAdminTrainingComplianceSummary(accessToken),
         getAdminOrgUnits(accessToken),
         getAdminCredentials(accessToken),
         getAdminEquipmentGaps(accessToken),
@@ -562,6 +568,7 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         exportHistory: exportHistory.exports,
         systemOverview,
         systemDiagnostics,
+        trainingComplianceSummary,
         orgUnits: orgUnits.units,
         credentials: credentials.credentials,
         equipmentGaps: equipmentGaps.gaps,

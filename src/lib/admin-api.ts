@@ -833,6 +833,60 @@ export async function getAdminSystemDiagnostics(accessToken: string) {
   return request<AdminSystemDiagnostics>(accessToken, "/admin/system/diagnostics");
 }
 
+export type AdminTrainingComplianceSummary = {
+  window_days: number;
+  staff_count: number;
+  total_required_items: number;
+  compliant_count: number;
+  overdue_count: number;
+  open_count: number;
+  status: "pass" | "open_items";
+  checked_at: string;
+};
+
+export type AdminTrainingComplianceItem = {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  training_type: string;
+  due_date: string;
+  completion_date: string | null;
+  certificate_uploaded: boolean;
+  submitted_to: string | null;
+  submission_status: string;
+  renewal_due_date: string | null;
+  is_overdue: boolean;
+  updated_at: string;
+};
+
+export async function getAdminTrainingComplianceSummary(accessToken: string) {
+  return request<AdminTrainingComplianceSummary>(accessToken, "/admin/training-compliance/summary");
+}
+
+export async function getAdminTrainingComplianceForUser(accessToken: string, userId: string) {
+  return request<{ items: AdminTrainingComplianceItem[] }>(accessToken, `/admin/training-compliance/${userId}`);
+}
+
+export async function upsertAdminTrainingCompliance(
+  accessToken: string,
+  userId: string,
+  payload: {
+    training_type: string;
+    due_date: string;
+    completion_date?: string | null;
+    certificate_uploaded?: boolean;
+    submitted_to?: string | null;
+    submission_status?: string;
+    renewal_due_date?: string | null;
+  },
+) {
+  return request<AdminTrainingComplianceItem>(accessToken, `/admin/training-compliance/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getAdminSystemOverview(accessToken: string) {
   return request<AdminSystemOverview>(accessToken, "/admin/system/overview");
 }

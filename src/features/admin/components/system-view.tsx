@@ -83,6 +83,7 @@ export function SystemView({
   const questionTotal = questionRegistry?.total_questions ?? systemOverview?.question_bank?.total_questions ?? 0;
   const activeQuestionBankVersion = adminStore.questionBankVersions.find((v) => !v.retired_date) ?? null;
   const thresholdRuleCount = thresholdRules ? Object.keys(thresholdRules).length : 0;
+  const trainingCompliance = adminStore.trainingComplianceSummary;
   const totalUtilizationEvents = adminStore.utilizationEvents.length;
   const usedUtilizationEvents = adminStore.utilizationEvents.filter((event) => event.actual_use).length;
   const averageAttendance = totalUtilizationEvents
@@ -307,6 +308,23 @@ export function SystemView({
           <span className="text-2xl font-black text-slate-800 dark:text-white tabular-nums">{thresholdRuleCount}</span>
           <span className="text-[10px] text-slate-400 font-semibold block">{thresholdRuleCount} live-configured parameters</span>
         </div>
+        {trainingCompliance && (
+          <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
+            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">
+              Compliance - {trainingCompliance.window_days}d
+            </span>
+            <span
+              className={`text-2xl font-black block ${
+                trainingCompliance.status === "pass" ? "text-[var(--brand-color)]" : "text-amber-500"
+              }`}
+            >
+              {trainingCompliance.status === "pass" ? "PASS" : `${trainingCompliance.overdue_count + trainingCompliance.open_count} open`}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold block">
+              AT Level I / OPSEC - {trainingCompliance.compliant_count} of {trainingCompliance.total_required_items} items compliant
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 4. Services Status & Threshold limits grid */}
