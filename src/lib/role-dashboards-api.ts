@@ -39,6 +39,28 @@ export type LeadershipDashboardSummary = {
   }>;
 };
 
+export type LeadershipHoursCoverage = {
+  role: string;
+  year: number;
+  entries_with_schedule: number;
+  total_scheduled_hours: number;
+  total_worked_hours: number;
+  worked_pct_of_scheduled: number | null;
+  missed_count: number;
+  missed_by_reason: Record<string, number>;
+};
+
+export type LeadershipPrsProviderRow = {
+  provider_id: string;
+  provider_name: string | null;
+  role: string;
+  logged_hours: number;
+  rsd_hours: number;
+  target_hours: number;
+  coverage_pct: number;
+  meets_95pct_evidence: boolean;
+};
+
 export type LeadershipAggregate = {
   hero: {
     cohort_size: number;
@@ -104,13 +126,52 @@ export type LeadershipAggregate = {
     }>;
   };
   min_cohort_size: number;
-  assessment_targets?: Record<string, unknown> | null;
-  feedback_sessions?: Record<string, unknown> | null;
-  scs_hours_coverage?: Record<string, unknown> | null;
-  ptim_hours_coverage?: Record<string, unknown> | null;
-  prs_providers?: Record<string, unknown> | null;
-  rsd_coverage?: Record<string, unknown> | null;
-  oft_metrics?: Record<string, unknown> | null;
+  assessment_targets?: {
+    total_operators: number;
+    eligible_6_month_cohort_size: number;
+    eligible_6_month_completion_pct: number | null;
+    eligible_6_month_target_pct: number;
+    eligible_12_month_cohort_size: number;
+    eligible_12_month_completion_pct: number | null;
+    eligible_12_month_target_pct: number;
+  } | null;
+  feedback_sessions?: {
+    period_start: string;
+    period_end: string;
+    total_assessments_in_period: number;
+    feedback_sessions_completed: number;
+    completion_pct: number | null;
+  } | null;
+  scs_hours_coverage?: LeadershipHoursCoverage | null;
+  ptim_hours_coverage?: LeadershipHoursCoverage | null;
+  prs_providers?: LeadershipPrsProviderRow[] | null;
+  rsd_coverage?: {
+    year: number;
+    total_rsd_hours: number;
+    session_count: number;
+  } | null;
+  oft_metrics?: {
+    month: string | null;
+    status_counts: Record<string, number>;
+    pass_count: number;
+    fail_count: number;
+    pass_rate_pct: number | null;
+    avg_items_passed: number | null;
+    avg_items_total: number | null;
+    government_entry_compliance_pct: number | null;
+    annual_test_count_distribution: Record<string, number>;
+    by_flight?: {
+      min_cohort_size: number;
+      flights: Array<{
+        flight_id: string;
+        flight_name: string;
+        cohort_size: number;
+        pass_count: number;
+        fail_count: number;
+        pass_rate_pct: number | null;
+      }>;
+    };
+  } | null;
   oft_due_soon_count?: number | null;
 };
 

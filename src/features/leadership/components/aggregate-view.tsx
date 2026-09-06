@@ -72,6 +72,11 @@ function CardHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   );
 }
 
+function formatLabel(value: string | null | undefined) {
+  if (!value) return "—";
+  return value.replace(/_/g, " ");
+}
+
 function formatMonthLabel(value: string) {
   const [year, month] = value.split("-").map(Number);
   if (!year || !month) return value;
@@ -452,6 +457,158 @@ export function AggregateView() {
           </div>
         </div>
       </Card>
+
+      <p className="text-[10px] font-mono text-slate-400">
+        Leadership · Aggregate · k &ge; {aggregate.min_cohort_size} · CUI
+      </p>
+
+      {(aggregate.assessment_targets || aggregate.feedback_sessions) && (
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {aggregate.assessment_targets && (
+            <>
+              <Card>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Assessment · 6 mo target</p>
+                <p className="mt-2 text-3xl font-black text-slate-900 dark:text-white">
+                  {aggregate.assessment_targets.eligible_6_month_completion_pct != null
+                    ? `${aggregate.assessment_targets.eligible_6_month_completion_pct.toFixed(0)}%`
+                    : "—"}
+                </p>
+                <p className="mt-2 text-[10px] text-slate-500">
+                  {aggregate.assessment_targets.eligible_6_month_cohort_size > 0
+                    ? `Target ${aggregate.assessment_targets.eligible_6_month_target_pct}% · cohort of ${aggregate.assessment_targets.eligible_6_month_cohort_size}`
+                    : "No eligible 6-month cohort yet"}
+                </p>
+              </Card>
+              <Card>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Assessment · 12 mo target</p>
+                <p className="mt-2 text-3xl font-black text-slate-900 dark:text-white">
+                  {aggregate.assessment_targets.eligible_12_month_completion_pct != null
+                    ? `${aggregate.assessment_targets.eligible_12_month_completion_pct.toFixed(0)}%`
+                    : "—"}
+                </p>
+                <p className="mt-2 text-[10px] text-slate-500">
+                  {aggregate.assessment_targets.eligible_12_month_cohort_size > 0
+                    ? `Target ${aggregate.assessment_targets.eligible_12_month_target_pct}% · cohort of ${aggregate.assessment_targets.eligible_12_month_cohort_size}`
+                    : "No eligible 12-month cohort yet"}
+                </p>
+              </Card>
+            </>
+          )}
+          {aggregate.feedback_sessions && (
+            <Card>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Feedback sessions</p>
+              <p className="mt-2 text-3xl font-black text-slate-900 dark:text-white">
+                {aggregate.feedback_sessions.feedback_sessions_completed} / {aggregate.feedback_sessions.total_assessments_in_period}
+              </p>
+              <p className="mt-2 text-[10px] text-slate-500">
+                {aggregate.feedback_sessions.completion_pct != null ? `${aggregate.feedback_sessions.completion_pct.toFixed(0)}% completed` : "—"}
+                {" · "}
+                {formatMonthLabel(aggregate.feedback_sessions.period_start.slice(0, 7))} – {formatMonthLabel(aggregate.feedback_sessions.period_end.slice(0, 7))}
+              </p>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {(aggregate.scs_hours_coverage || aggregate.ptim_hours_coverage || aggregate.oft_metrics) && (
+        <div className="grid gap-6 lg:grid-cols-12">
+          {(aggregate.scs_hours_coverage || aggregate.ptim_hours_coverage) && (
+            <Card className="lg:col-span-6">
+              <CardHeader
+                title="SCS + PT/IM hours coverage"
+                subtitle="Scheduled vs. worked hours - real per-role schedule adherence, plus RSD tracked separately"
+              />
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                {aggregate.scs_hours_coverage && (
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">SCS scheduled / worked</p>
+                    <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                      {aggregate.scs_hours_coverage.total_scheduled_hours} / {aggregate.scs_hours_coverage.total_worked_hours}h
+                    </p>
+                    <p className="text-[10px] text-slate-500">
+                      {aggregate.scs_hours_coverage.worked_pct_of_scheduled != null
+                        ? `${aggregate.scs_hours_coverage.worked_pct_of_scheduled.toFixed(0)}% of scheduled`
+                        : "No scheduled entries yet"}
+                      {" · "}
+                      {aggregate.scs_hours_coverage.missed_count} missed
+                    </p>
+                  </div>
+                )}
+                {aggregate.ptim_hours_coverage && (
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">PT/IM scheduled / worked</p>
+                    <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                      {aggregate.ptim_hours_coverage.total_scheduled_hours} / {aggregate.ptim_hours_coverage.total_worked_hours}h
+                    </p>
+                    <p className="text-[10px] text-slate-500">
+                      {aggregate.ptim_hours_coverage.worked_pct_of_scheduled != null
+                        ? `${aggregate.ptim_hours_coverage.worked_pct_of_scheduled.toFixed(0)}% of scheduled`
+                        : "No scheduled entries yet"}
+                      {" · "}
+                      {aggregate.ptim_hours_coverage.missed_count} missed
+                    </p>
+                  </div>
+                )}
+              </div>
+              {aggregate.rsd_coverage && (
+                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-[10px] dark:border-white/5">
+                  <div>
+                    <p className="font-bold uppercase tracking-wide text-slate-400">RSD coverage (separate)</p>
+                    <p className="mt-0.5 text-slate-500">Restricted-status duty sessions, tracked apart from regular hours.</p>
+                  </div>
+                  <span className="rounded bg-amber-500/10 px-2 py-0.5 font-bold text-amber-500">
+                    {aggregate.rsd_coverage.total_rsd_hours}h · {aggregate.rsd_coverage.session_count} sessions
+                  </span>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {aggregate.oft_metrics && (
+            <Card className="lg:col-span-6">
+              <CardHeader title="Monthly OFT reporting" subtitle="Status, pass rate, reconditioning, next due" />
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                {Object.entries(aggregate.oft_metrics.status_counts).map(([status, count]) => (
+                  <div key={status} className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-white/5 dark:bg-slate-900/50">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">{formatLabel(status)}</p>
+                    <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{count}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-4 border-t border-slate-100 pt-3 text-xs dark:border-white/5">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Pass rate</p>
+                  <p className="font-bold text-slate-800 dark:text-white">
+                    {aggregate.oft_metrics.pass_rate_pct != null ? `${aggregate.oft_metrics.pass_rate_pct.toFixed(1)}%` : "—"}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    {aggregate.oft_metrics.pass_count} pass · {aggregate.oft_metrics.fail_count} fail
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Gov&apos;t entry compliance</p>
+                  <p className="font-bold text-slate-800 dark:text-white">
+                    {aggregate.oft_metrics.government_entry_compliance_pct != null
+                      ? `${aggregate.oft_metrics.government_entry_compliance_pct.toFixed(1)}%`
+                      : "—"}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Avg {aggregate.oft_metrics.avg_items_passed ?? "—"} / {aggregate.oft_metrics.avg_items_total ?? "—"} items
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-[10px] leading-relaxed text-slate-500 dark:border-white/5 dark:bg-slate-900/40">
+        <p>
+          Privacy &amp; cohort suppression - this view shows flights and cohorts only. No individual identifiers appear. Cells
+          where cohort size is below k = {aggregate.min_cohort_size} are suppressed and shown as &ldquo;Unavailable&rdquo; or &ldquo;—&rdquo;. Exports inherit the same suppression.
+        </p>
+        <p className="mt-1">Aggregate-only · no individual drill-down · no individual reports.</p>
+      </div>
     </div>
   );
 }
