@@ -210,19 +210,12 @@ export function ReportsView() {
                     <p className="mt-1 text-[10px] text-slate-500">{template.report_type} · {template.cadence} · {template.export_format.toUpperCase()}</p>
                   </div>
                   <button
-                    onClick={async () => {
-                      if (!accessToken) return;
-                      setIsMutating(true);
-                      try {
-                        await useLeadershipReportTemplate(accessToken, template.key);
-                        await refreshData(`${template.title} template created a live schedule.`);
-                      } catch (nextError) {
-                        triggerToast(getApiErrorMessage(nextError));
-                      } finally {
-                        setIsMutating(false);
-                      }
+                    onClick={() => {
+                      setNewReportTitle("");
+                      setNewReportTemplateKey(template.key);
+                      setNewReportStep("confirm");
+                      setShowNewReportModal(true);
                     }}
-                    disabled={isMutating}
                     className="rounded-lg bg-[var(--brand-color)] px-3 py-1.5 text-[10px] font-bold text-white disabled:opacity-50 cursor-pointer"
                     type="button"
                   >
