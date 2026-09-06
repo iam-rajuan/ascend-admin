@@ -422,6 +422,85 @@ export function RolesView({
         </div>
       </div>
 
+      {/* 5. Accounts & Onboarding Section */}
+      {adminStore.accountsSummary && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Accounts &amp; onboarding</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Status · access expiration · assigned providers · effective permissions · Purpose consent (separate)
+              </p>
+            </div>
+            <span className="px-2 py-0.5 bg-[var(--brand-color)]/10 text-[var(--brand-color)] text-[9px] font-bold rounded-full uppercase">
+              Live
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Account status</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.account_status.active_count} active ·{" "}
+                  {adminStore.accountsSummary.account_status.expired_count} expired
+                </p>
+                <p className="text-[10px] text-slate-400 tabular-nums">
+                  {adminStore.accountsSummary.account_status.total_count} accounts total
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Assigned providers</span>
+                <p className="font-bold text-slate-800 dark:text-white">
+                  {adminStore.accountsSummary.assigned_providers.always_available_pathways.join(" + ") || "—"}
+                </p>
+                <p className="text-[10px] text-slate-400">Always-available pathways · per-caseload assignment</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Onboarding</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.onboarding.in_flight_count} in flight
+                </p>
+                <p className="text-[10px] text-slate-400 tabular-nums">
+                  {adminStore.accountsSummary.onboarding.awaiting_role_confirmation_count} awaiting role confirmation ·
+                  Airman accounts only
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Effective permissions</span>
+                <p className="font-bold text-slate-800 dark:text-white">RBAC matrix above</p>
+                <p className="text-[10px] text-slate-400">{adminStore.accountsSummary.effective_permissions.note}</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Access expiration</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.access_expiration.expiring_soon_30d_count} expiring in 30d ·{" "}
+                  {adminStore.accountsSummary.access_expiration.expired_count} expired
+                </p>
+                {/* Deliberately the backend's own note, not the mock's "all scopes
+                    renew automatically on annual review" - access_expires_at is
+                    never auto-renewed, renewal is a manual Admin action. */}
+                <p className="text-[10px] text-slate-400">{adminStore.accountsSummary.access_expiration.renewal_note}</p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Purpose consent (separate)</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.purpose_consent.active_count} active ·{" "}
+                  {adminStore.accountsSummary.purpose_consent.withdrawn_count} withdrawn
+                </p>
+                <p className="text-[10px] text-slate-400">Revoked consent removes Chaplain pathway access immediately</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RBAC CONFIRM BOTTOM BAR */}
       {rbacChanged && (
         <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] text-white p-4 border-t border-slate-800 flex items-center justify-between z-40 animate-slide-up shadow-2xl">
