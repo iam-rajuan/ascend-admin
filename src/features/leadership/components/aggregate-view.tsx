@@ -110,6 +110,82 @@ function HeroTrendChart({ months }: { months: Array<{ month: string; average_ops
   );
 }
 
+function MiniSparkline({ points, toneClass }: { points: number[]; toneClass: string }) {
+  if (points.length < 2) {
+    return <span className="text-[9px] text-slate-400">Not enough months yet</span>;
+  }
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const w = 84;
+  const h = 28;
+  const coords = points.map((v, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - ((v - min) / (max - min || 1)) * h;
+    return [x, y] as const;
+  });
+  const path = coords.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className={`h-7 w-21 ${toneClass}`}>
+      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function driverBandTone(band: string | null | undefined) {
+  const normalized = String(band ?? "").toLowerCase();
+  if (normalized.includes("ready") || normalized.includes("monitor")) return "text-emerald-500";
+  if (normalized.includes("caution")) return "text-amber-500";
+  if (normalized.includes("action")) return "text-rose-500";
+  return "text-slate-400";
+}
+
+function DriverTrendCard({
+  component,
+  band,
+  months,
+  cohortSize,
+}: {
+  component: string;
+  band: string | null;
+  months: Array<{ month: string; component_averages: Record<string, number> }>;
+  cohortSize: number;
+}) {
+  const series = months
+    .map((m) => m.component_averages[component])
+    .filter((v): v is number => typeof v === "number");
+  const latest = series[series.length - 1] ?? null;
+  const momDelta = series.length >= 2 ? series[series.length - 1] - series[series.length - 2] : null;
+  const tone = driverBandTone(band);
+  const shortLabel = component.replace(" Readiness", "");
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/5 dark:bg-[#0e1628]">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-slate-800 dark:text-white">{shortLabel}</span>
+        <span className={`flex items-center gap-1 text-[9px] font-bold uppercase ${tone}`}>
+          <span className="size-1.5 rounded-full bg-current" />
+          {band || "—"}
+        </span>
+      </div>
+      <div className="mt-2 flex items-end justify-between gap-2">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{formatScore(latest)}</span>
+          {typeof momDelta === "number" && (
+            <span className={`text-[10px] font-bold ${momDelta >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+              {momDelta >= 0 ? "+" : ""}
+              {momDelta.toFixed(1)}
+            </span>
+          )}
+        </div>
+        <MiniSparkline points={series} toneClass={tone} />
+      </div>
+      <p className="mt-2 text-[9px] text-slate-400">
+        {months.length} mo · k={cohortSize}
+      </p>
+    </div>
+  );
+}
+
 function SimpleKeyValueList({ rows }: { rows: { label: string; value: string }[] }) {
   return (
     <div className="space-y-3 text-xs">
@@ -205,13 +281,29 @@ export function AggregateView() {
         <MetricCard title="PvP delta" value={formatScore(aggregate.hero.pvp_delta)} subtext="Period-over-period" />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-12">
-        <Card className="lg:col-span-5">
-          <CardHeader title="Driver trends" subtitle="Aggregate component averages and current bands" />
-          <SimpleKeyValueList rows={aggregate.driver_trends.map((item) => ({ label: item.component, value: `${formatScore(item.average_score)} · ${item.score_band || "—"}` }))} />
-        </Card>
+      <div className="space-y-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Supporting signal</p>
+          <h2 className="text-lg font-bold text-slate-800 dark:text-white">Driver trends</h2>
+          <p className="text-xs text-slate-500">
+            {aggregate.driver_trends.length} drivers · sparkline + delta · month-over-month
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          {aggregate.driver_trends.map((item) => (
+            <DriverTrendCard
+              key={item.component}
+              component={item.component}
+              band={item.score_band}
+              months={aggregate.hero.months}
+              cohortSize={aggregate.hero.cohort_size}
+            />
+          ))}
+        </div>
+      </div>
 
-        <Card className="lg:col-span-7">
+      <div className="grid gap-6 lg:grid-cols-12">
+        <Card className="lg:col-span-12">
           <CardHeader title="Flight comparison" subtitle={`${aggregate.flight_comparison.flights_meeting_cohort_minimum} of ${aggregate.flight_comparison.total_flights} flights meet the cohort minimum`} />
           <div className="overflow-x-auto text-xs">
             <table className="w-full text-left">
