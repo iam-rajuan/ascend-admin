@@ -227,7 +227,7 @@ export function BriefingsView() {
                 </button>
               )}
 
-              {briefingDetail.status === "under_review" && (
+              {briefingDetail.status === "pending_review" && (
                 <button
                   onClick={async () => {
                     if (!accessToken) return;
