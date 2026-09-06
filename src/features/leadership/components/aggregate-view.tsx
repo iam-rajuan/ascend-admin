@@ -9,6 +9,18 @@ function formatScore(value: number | null | undefined) {
   return value.toFixed(1);
 }
 
+// Real R1-R5 risk-severity scale (leadership_aggregate_service.
+// RISK_SEVERITY_BY_BAND) - deliberately not L-prefixed, this codebase
+// already has two other differently-meaning L-scales. R1=Ready (best) to
+// R5=High Priority (worst).
+const RISK_SEVERITY_COLOR: Record<string, string> = {
+  R1: "bg-emerald-500",
+  R2: "bg-teal-500",
+  R3: "bg-amber-500",
+  R4: "bg-orange-500",
+  R5: "bg-rose-500",
+};
+
 function statusTone(status: string | null | undefined) {
   const normalized = String(status ?? "").toLowerCase();
   if (normalized.includes("sent") || normalized.includes("ready") || normalized.includes("completed")) {
@@ -137,6 +149,14 @@ function driverBandTone(band: string | null | undefined) {
   if (normalized.includes("caution")) return "text-amber-500";
   if (normalized.includes("action")) return "text-rose-500";
   return "text-slate-400";
+}
+
+function readinessBarColor(band: string | null | undefined) {
+  const normalized = String(band ?? "").toLowerCase();
+  if (normalized.includes("ready") || normalized.includes("monitor")) return "bg-emerald-500";
+  if (normalized.includes("caution")) return "bg-amber-500";
+  if (normalized.includes("action") || normalized.includes("priority")) return "bg-rose-500";
+  return "bg-slate-300 dark:bg-slate-700";
 }
 
 function DriverTrendCard({
@@ -303,16 +323,17 @@ export function AggregateView() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
-        <Card className="lg:col-span-12">
-          <CardHeader title="Flight comparison" subtitle={`${aggregate.flight_comparison.flights_meeting_cohort_minimum} of ${aggregate.flight_comparison.total_flights} flights meet the cohort minimum`} />
+        <Card className="lg:col-span-7">
+          <CardHeader
+            title="By-flight comparison"
+            subtitle={`${aggregate.flight_comparison.flights_meeting_cohort_minimum} of ${aggregate.flight_comparison.total_flights} flights meet the cohort minimum - aggregate only, never individuals`}
+          />
           <div className="overflow-x-auto text-xs">
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-slate-100 text-slate-400 dark:border-white/5">
                   <th className="pb-3 font-semibold">Flight</th>
-                  <th className="pb-3 font-semibold">Cohort</th>
-                  <th className="pb-3 font-semibold">OPS</th>
-                  <th className="pb-3 font-semibold">Band</th>
+                  <th className="pb-3 font-semibold">Readiness</th>
                   <th className="pb-3 font-semibold">MoM</th>
                   <th className="pb-3 font-semibold">Confidence</th>
                 </tr>
@@ -321,56 +342,107 @@ export function AggregateView() {
                 {aggregate.flight_comparison.flights.map((flight) => (
                   <tr key={flight.flight_id}>
                     <td className="py-3 font-semibold text-slate-800 dark:text-white">{flight.flight_name}</td>
-                    <td className="py-3 text-slate-500">{flight.cohort_size}</td>
-                    <td className="py-3 font-mono text-slate-500">{formatScore(flight.average_ops_score)}</td>
-                    <td className="py-3"><span className={`rounded px-2 py-0.5 text-[10px] font-bold ${statusTone(flight.score_band)}`}>{flight.score_band || "—"}</span></td>
+                    <td className="py-3">
+                      {typeof flight.average_ops_score === "number" ? (
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                            <div
+                              className={`h-full rounded-full ${readinessBarColor(flight.score_band)}`}
+                              style={{ width: `${Math.max(4, Math.min(100, flight.average_ops_score))}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-slate-600 dark:text-slate-300">{formatScore(flight.average_ops_score)}</span>
+                        </div>
+                      ) : (
+                        <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${statusTone(flight.score_band)}`}>{flight.score_band || "—"}</span>
+                      )}
+                    </td>
                     <td className="py-3 text-slate-500">{formatScore(flight.mom_delta)}</td>
                     <td className="py-3 text-slate-500">{flight.confidence || "—"}</td>
                   </tr>
                 ))}
                 {aggregate.flight_comparison.flights.length === 0 && (
-                  <tr><td colSpan={6} className="py-6 text-center text-slate-400">No flights met the aggregate comparison criteria.</td></tr>
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No flights met the aggregate comparison criteria.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </Card>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-12">
-        <Card className="lg:col-span-7">
-          <CardHeader title="Risk heatmap" subtitle="Driver severity and band values returned by the backend" />
-          <div className="space-y-4">
-            {aggregate.risk_heatmap.flights.map((flight) => (
-              <div key={flight.flight_id} className="rounded-xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-bold text-slate-900 dark:text-white">{flight.flight_name}</p>
-                  <span className="text-[10px] text-slate-400">{flight.suppressed ? "Suppressed" : `k=${flight.cohort_size}`}</span>
-                </div>
-                <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                  {Object.keys(flight.driver_bands).map((driver) => (
-                    <div key={driver} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 dark:border-white/5 dark:bg-[#0e1628]">
-                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{driver}</span>
-                      <span className="text-[10px] text-slate-500">{flight.driver_bands[driver] || "—"} · {flight.driver_severity[driver] || "—"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
 
         <Card className="lg:col-span-5">
-          <CardHeader title="Recovery program summary" subtitle={`${aggregate.recovery_program_summary.total_active_plans} active plans across live flights`} />
-          <SimpleKeyValueList
-            rows={[
-              { label: "Flights with active recovery", value: String(aggregate.recovery_program_summary.flights_with_active_recovery) },
-              { label: "On-track flights", value: String(aggregate.recovery_program_summary.on_track_flight_count) },
-              { label: "Flights meeting cohort minimum", value: String(aggregate.recovery_program_summary.flights_meeting_cohort_minimum) },
-              { label: "OFT due soon", value: String(aggregate.oft_due_soon_count ?? 0) },
-            ]}
-          />
-          <div className="mt-4 space-y-3 text-xs">
+          <CardHeader title="Risk heatmap" subtitle="Real R1 (Ready) to R5 (High Priority) severity per driver, per flight" />
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[10px]">
+              <thead>
+                <tr>
+                  <th className="pb-2"></th>
+                  {aggregate.risk_heatmap.flights.map((flight) => (
+                    <th key={flight.flight_id} className="pb-2 text-center font-semibold text-slate-400" title={flight.flight_name}>
+                      {flight.flight_name.slice(0, 3).toUpperCase()}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.keys(aggregate.risk_heatmap.flights[0]?.driver_bands ?? {}).map((driver) => (
+                  <tr key={driver} className="border-t border-slate-100 dark:border-white/5">
+                    <td className="py-2 pr-2 font-semibold text-slate-600 dark:text-slate-300">{driver.replace(" Readiness", "")}</td>
+                    {aggregate.risk_heatmap.flights.map((flight) => {
+                      const severity = flight.driver_severity[driver];
+                      return (
+                        <td key={flight.flight_id} className="py-2 text-center">
+                          <span
+                            className={`mx-auto block size-2.5 rounded-full ${severity ? RISK_SEVERITY_COLOR[severity] ?? "bg-slate-300" : "bg-slate-200 dark:bg-slate-800"}`}
+                            title={
+                              flight.suppressed
+                                ? "Suppressed - below cohort minimum"
+                                : severity
+                                  ? `${severity} · ${flight.driver_bands[driver]}`
+                                  : "No data"
+                            }
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 text-[9px] text-slate-500 dark:border-white/5">
+            <span className="font-bold uppercase tracking-wide text-slate-400">Legend:</span>
+            {(["R1", "R2", "R3", "R4", "R5"] as const).map((code) => (
+              <span key={code} className="flex items-center gap-1">
+                <span className={`size-2 rounded-full ${RISK_SEVERITY_COLOR[code]}`} />
+                {code}
+              </span>
+            ))}
+            <span className="flex items-center gap-1">
+              <span className="size-2 rounded-full bg-slate-200 dark:bg-slate-800" />
+              No data / suppressed
+            </span>
+          </div>
+        </Card>
+      </div>
+
+      <p className="text-[10px] font-mono text-slate-400">
+        Leadership · Aggregate · k &ge; {aggregate.min_cohort_size} · CUI
+      </p>
+
+      <Card>
+        <CardHeader title="Recovery program summary" subtitle={`${aggregate.recovery_program_summary.total_active_plans} active plans across live flights`} />
+        <div className="grid gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-5">
+            <SimpleKeyValueList
+              rows={[
+                { label: "Flights with active recovery", value: String(aggregate.recovery_program_summary.flights_with_active_recovery) },
+                { label: "On-track flights", value: String(aggregate.recovery_program_summary.on_track_flight_count) },
+                { label: "Flights meeting cohort minimum", value: String(aggregate.recovery_program_summary.flights_meeting_cohort_minimum) },
+                { label: "OFT due soon", value: String(aggregate.oft_due_soon_count ?? 0) },
+              ]}
+            />
+          </div>
+          <div className="space-y-3 text-xs lg:col-span-7">
             {aggregate.recovery_program_summary.flights.map((flight) => (
               <div key={flight.flight_id} className="rounded-xl border border-slate-100 bg-slate-50 p-4 dark:border-white/5 dark:bg-slate-900/50">
                 <p className="font-semibold text-slate-900 dark:text-white">{flight.flight_name}</p>
@@ -378,8 +450,8 @@ export function AggregateView() {
               </div>
             ))}
           </div>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   );
 }
