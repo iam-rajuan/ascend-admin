@@ -91,14 +91,22 @@ function LeadershipLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          <div className="border-t border-slate-100 p-4 dark:border-white/5">
+          <div className="space-y-1 border-t border-slate-100 p-4 dark:border-white/5">
             <button
               onClick={() => router.push("/dashboard/profile")}
-              className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-xs font-semibold transition hover:bg-slate-100 dark:hover:bg-slate-900/50 cursor-pointer"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 transition hover:text-slate-800 dark:text-slate-400 dark:hover:text-white cursor-pointer"
               type="button"
             >
               <ArrowLeft className="size-4" />
               My profile
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-50 dark:hover:bg-red-950/10 cursor-pointer"
+              type="button"
+            >
+              <LogOut className="size-4" />
+              Sign Out
             </button>
           </div>
         </aside>
@@ -131,14 +139,6 @@ function LeadershipLayoutInner({ children }: { children: React.ReactNode }) {
                 aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
                 onClick={toggleTheme}
               />
-              <button
-                onClick={handleLogout}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 dark:border-red-950/20 dark:bg-red-950/10 dark:text-red-400 dark:hover:bg-red-950/30 cursor-pointer"
-                type="button"
-              >
-                <LogOut className="size-3.5" />
-                Sign Out
-              </button>
             </div>
           </header>
 
