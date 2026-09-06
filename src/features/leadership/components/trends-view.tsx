@@ -98,6 +98,88 @@ function CompositeTrendChart({
   );
 }
 
+function driverBandTone(band: string | null | undefined) {
+  const normalized = String(band ?? "").toLowerCase();
+  if (normalized.includes("ready") || normalized.includes("monitor")) return "text-emerald-500";
+  if (normalized.includes("caution")) return "text-amber-500";
+  if (normalized.includes("action")) return "text-rose-500";
+  return "text-slate-400";
+}
+
+function readinessBarColor(band: string | null | undefined) {
+  const normalized = String(band ?? "").toLowerCase();
+  if (normalized.includes("ready") || normalized.includes("monitor")) return "bg-emerald-500";
+  if (normalized.includes("caution")) return "bg-amber-500";
+  if (normalized.includes("action") || normalized.includes("priority")) return "bg-rose-500";
+  return "bg-slate-300 dark:bg-slate-700";
+}
+
+function MiniSparkline({ points, toneClass }: { points: number[]; toneClass: string }) {
+  if (points.length < 2) {
+    return <span className="text-[9px] text-slate-400">Not enough months yet</span>;
+  }
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const w = 84;
+  const h = 28;
+  const coords = points.map((v, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - ((v - min) / (max - min || 1)) * h;
+    return [x, y] as const;
+  });
+  const path = coords.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className={`h-7 w-21 ${toneClass}`}>
+      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function DriverTrendCard({
+  component,
+  band,
+  months,
+  cohortSize,
+}: {
+  component: string;
+  band: string | null;
+  months: Array<{ month: string; component_averages: Record<string, number> }>;
+  cohortSize: number;
+}) {
+  const series = months.map((m) => m.component_averages[component]).filter((v): v is number => typeof v === "number");
+  const latest = series[series.length - 1] ?? null;
+  const momDelta = series.length >= 2 ? series[series.length - 1] - series[series.length - 2] : null;
+  const tone = driverBandTone(band);
+  const shortLabel = component.replace(" Readiness", "");
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/5 dark:bg-[#0e1628]">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-slate-800 dark:text-white">{shortLabel}</span>
+        <span className={`flex items-center gap-1 text-[9px] font-bold uppercase ${tone}`}>
+          <span className="size-1.5 rounded-full bg-current" />
+          {band || "—"}
+        </span>
+      </div>
+      <div className="mt-2 flex items-end justify-between gap-2">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{formatScore(latest)}</span>
+          {typeof momDelta === "number" && (
+            <span className={`text-[10px] font-bold ${momDelta >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+              {momDelta >= 0 ? "+" : ""}
+              {momDelta.toFixed(1)}
+            </span>
+          )}
+        </div>
+        <MiniSparkline points={series} toneClass={tone} />
+      </div>
+      <p className="mt-2 text-[9px] text-slate-400">
+        {months.length} mo · k={cohortSize}
+      </p>
+    </div>
+  );
+}
+
 function SimpleKeyValueList({ rows }: { rows: { label: string; value: string }[] }) {
   return (
     <div className="space-y-3 text-xs">
@@ -112,7 +194,7 @@ function SimpleKeyValueList({ rows }: { rows: { label: string; value: string }[]
 }
 
 export function TrendsView() {
-  const { loading, error, period, setPeriod, trends, refreshData, isMutating, setIsMutating, triggerToast } = useLeadership();
+  const { loading, error, period, setPeriod, trends, aggregate, refreshData, isMutating, setIsMutating, triggerToast } = useLeadership();
   const accessToken = useAuthStore((state) => state.accessToken);
 
   const [showAnnotationModal, setShowAnnotationModal] = useState(false);
@@ -235,6 +317,77 @@ export function TrendsView() {
           </div>
         </div>
       </Card>
+
+      {aggregate && aggregate.driver_trends.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Drivers</p>
+            <h2 className="text-lg font-bold text-slate-800 dark:text-white">Driver trends</h2>
+            <p className="text-xs text-slate-500">
+              {aggregate.driver_trends.length} drivers · sparkline + delta · month over month
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            {aggregate.driver_trends.map((item) => (
+              <DriverTrendCard
+                key={item.component}
+                component={item.component}
+                band={item.score_band}
+                months={trends.trend.months}
+                cohortSize={latestMonth?.cohort_size ?? trends.trend.min_cohort_size}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-12">
+        <Card className="lg:col-span-7">
+          <CardHeader
+            title="Cohort trend breakdown"
+            subtitle={`Scope: Cohort · By readiness band · cohort-level deltas · k ≥ ${trends.band_distribution.min_cohort_size}`}
+          />
+          <div className="space-y-3">
+            {trends.band_distribution.current_distribution.map((row) => {
+              const maxCount = Math.max(...trends.band_distribution.current_distribution.map((r) => r.count), 1);
+              return (
+                <div key={row.band} className="flex items-center gap-3">
+                  <span className="w-28 shrink-0 text-xs font-semibold text-slate-700 dark:text-slate-200">{row.band}</span>
+                  <div className="h-2.5 flex-1 rounded-full bg-slate-100 dark:bg-slate-900/60">
+                    <div
+                      className={`h-2.5 rounded-full ${readinessBarColor(row.band)}`}
+                      style={{ width: `${Math.max((row.count / maxCount) * 100, 4)}%` }}
+                    />
+                  </div>
+                  <span className={`w-16 shrink-0 text-right text-xs font-bold ${typeof row.delta === "number" ? (row.delta >= 0 ? "text-emerald-500" : "text-rose-500") : "text-slate-400"}`}>
+                    {typeof row.delta === "number" ? `${row.delta >= 0 ? "+" : ""}${row.delta}` : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-[10px] text-slate-400">
+            All cohorts meet k ≥ {trends.band_distribution.min_cohort_size}. Numbers are aggregate and may not be summed across bands.
+          </p>
+        </Card>
+
+        <Card className="lg:col-span-5">
+          <CardHeader title="Annotated events" subtitle="Leadership-created context markers for this window" />
+          <div className="space-y-4">
+            {trends.annotations.slice(0, 5).map((annotation) => (
+              <div key={annotation.id} className="flex gap-3">
+                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--brand-color)]" />
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{formatDate(annotation.event_date)}</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">{annotation.title}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{annotation.narrative}</p>
+                </div>
+              </div>
+            ))}
+            {trends.annotations.length === 0 && <p className="text-xs text-slate-400">No aggregate annotations are stored yet.</p>}
+          </div>
+        </Card>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-12">
         <Card className="lg:col-span-8">
