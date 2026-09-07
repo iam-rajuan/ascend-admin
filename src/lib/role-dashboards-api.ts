@@ -427,8 +427,27 @@ export type CoverageLoadByFlightResponse = {
   flights: FlightReconditioningLoad[];
 };
 
+export type PerformanceSummaryEntry = {
+  id: string;
+  user_id: string;
+  created_by: string;
+  reviewer_role: string;
+  review_date: string;
+  approved_visibility_level: string;
+  expiration_or_review_due_date: string | null;
+  specialist_notes_link: string[];
+  created_at: string;
+  injury_history_summary: string | null;
+  limitations_summary: string | null;
+  return_to_performance_considerations: string | null;
+  nutrition_considerations: string | null;
+  sleep_recovery_considerations: string | null;
+  medication_allergy_considerations_if_authorized: string | null;
+  withheld_fields: string[];
+};
+
 export type PerformanceSummariesResponse = {
-  summaries: Array<Record<string, unknown>>;
+  summaries: PerformanceSummaryEntry[];
 };
 
 export type RoutingLevelsResponse = {
@@ -446,7 +465,29 @@ export type MessageThreadsResponse = {
   threads: Array<Record<string, unknown>>;
 };
 
-export type MessageThreadDetailResponse = Record<string, unknown>;
+export type MessageEntry = {
+  id: string;
+  thread_key: string;
+  thread_id: string | null;
+  sender_id: string;
+  sender_role: string;
+  recipient_id: string | null;
+  body: string;
+  is_read: boolean;
+  source_type: string;
+  related_recommendation_id: string | null;
+  attachment: { file_name: string; file_size_bytes: number } | null;
+  created_at: string;
+};
+
+export type MessageThreadDetailResponse = {
+  thread_key: string;
+  other_user_id: string;
+  other_user_name: string | null;
+  other_user_role: string;
+  pathway_context: Record<string, unknown> | null;
+  messages: MessageEntry[];
+};
 
 export type RecordUploadsResponse = {
   records: Array<Record<string, unknown>>;
@@ -477,7 +518,19 @@ export type InjuryReportByFlightResponse = {
 
 export type InjuryReportQuartersResponse = {
   fiscal_year: number;
-  quarters: Array<InjuryReportByFlightResponse & { quarter: number }>;
+  quarters: Array<
+    InjuryReportByFlightResponse & {
+      quarter: number;
+      total_injuries: number;
+      l4_plus_count: number;
+      days_lost: number;
+      injury_rate_per_100_person_months: number | null;
+      total_injuries_delta: number | null;
+      l4_plus_count_delta: number | null;
+      days_lost_delta: number | null;
+      injury_rate_per_100_person_months_delta: number | null;
+    }
+  >;
 };
 
 export type InjuryTypeBreakdownResponse = {
@@ -534,6 +587,12 @@ export type LeaveHistoryResponse = {
 
 function buildUrl(path: string) {
   return `${env.NEXT_PUBLIC_API_BASE_URL}${path}`;
+}
+
+/** Same host/path as the real REST API, http(s) swapped for ws(s) - for the real `/messaging/live` change-stream socket. */
+export function buildWsUrl(path: string, accessToken: string) {
+  const wsBase = env.NEXT_PUBLIC_API_BASE_URL.replace(/^http/, "ws");
+  return `${wsBase}${path}?token=${encodeURIComponent(accessToken)}`;
 }
 
 async function parseEnvelope<T>(response: Response): Promise<T> {
@@ -965,8 +1024,206 @@ export async function getMealConsistencyByFlight(accessToken: string) {
   return request<MealConsistencyByFlightResponse>(accessToken, "/dashboard/nutrition/meal-consistency");
 }
 
+export type MealLogEntry = {
+  id: string;
+  user_id: string;
+  meal_date: string;
+  meal_type: string;
+  description: string;
+  calories: number | null;
+  carbs_g: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  flagged: boolean;
+  flag_reason: string | null;
+  logged_by_id: string;
+  created_at: string;
+};
+
+export type MealLogsResponse = {
+  meal_logs: MealLogEntry[];
+};
+
+export async function getMealLogs(accessToken: string, userId: string, days = 60) {
+  return request<MealLogsResponse>(accessToken, `/meal-logs/${userId}?days=${days}`);
+}
+
+export async function updateMealLogFlag(
+  accessToken: string,
+  mealLogId: string,
+  payload: { flagged: boolean; flag_reason?: string | null },
+) {
+  return request<MealLogEntry>(accessToken, `/meal-logs/${mealLogId}/flag`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export type CohortMacroDistribution = {
+  window_days: number;
+  min_cohort_size: number;
+  cohort_size: number;
+  meets_cohort_minimum: boolean;
+  carbs_pct: number | null;
+  protein_pct: number | null;
+  fat_pct: number | null;
+  entries_with_macros: number;
+  on_target_band_pct: number | null;
+  on_target_entries: number;
+  entries_with_target: number;
+};
+
+export async function getCohortMacroDistribution(accessToken: string) {
+  return request<CohortMacroDistribution>(accessToken, "/dashboard/nutrition/macro-distribution");
+}
+
+export type HydrationAlert = {
+  flight_id: string;
+  flight_name: string;
+  streak_days: number;
+  latest_adherence_pct: number | null;
+  threshold_pct: number;
+  members: Array<{ id: string; name: string | null; messageable: boolean }>;
+};
+
+export type HydrationAlertsResponse = {
+  window_days: number;
+  threshold_pct: number;
+  min_streak_days: number;
+  min_cohort_size: number;
+  alerts: HydrationAlert[];
+};
+
+export async function getHydrationAlerts(accessToken: string) {
+  return request<HydrationAlertsResponse>(accessToken, "/dashboard/nutrition/hydration-alerts");
+}
+
+export type SpecialistNoteEntry = {
+  id: string;
+  user_id: string;
+  specialist_id: string;
+  specialist_name: string | null;
+  specialist_type: string;
+  title: string;
+  note_date: string;
+  note_type: string;
+  escalated: boolean;
+  user_concern: string;
+  action_assigned: string | null;
+  follow_up_needed: boolean;
+  status: string;
+  documentation_status: string;
+  signed_at: string | null;
+  draft_expired: boolean;
+  is_redacted: boolean;
+  created_at: string;
+};
+
+export async function listSpecialistNotes(accessToken: string, userId: string) {
+  return request<{ notes: SpecialistNoteEntry[] }>(accessToken, `/specialist-notes/${userId}`);
+}
+
+export async function createSpecialistNote(
+  accessToken: string,
+  userId: string,
+  payload: { title: string; user_concern: string; action_assigned?: string; follow_up_needed?: boolean; note_type?: string; escalated?: boolean },
+) {
+  return request<SpecialistNoteEntry>(accessToken, `/specialist-notes/${userId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export type MyAuditLogEntry = {
+  id: string;
+  event_type: string;
+  actor_id: string | null;
+  actor_role: string;
+  target_entity_type: string;
+  target_entity_id: string;
+  summary_message: string;
+  metadata_payload: Record<string, unknown> | null;
+  outcome_status: string;
+  created_at: string;
+};
+
+export type MyAuditLogResponse = {
+  total: number;
+  page: number;
+  page_size: number;
+  entries: MyAuditLogEntry[];
+};
+
+export async function getMyAuditLog(accessToken: string, page = 1, pageSize = 20) {
+  return request<MyAuditLogResponse>(accessToken, `/admin/audit-log/mine?page=${page}&page_size=${pageSize}`);
+}
+
+export type MacroTarget = {
+  id: string;
+  user_id: string;
+  title: string;
+  carbs_pct: number;
+  protein_pct: number;
+  fat_pct: number;
+  status: string;
+  set_by_id: string;
+  started_at: string;
+  ended_at: string | null;
+  adherence_pct: number | null;
+  entries_with_macros: number;
+  updated_at: string;
+};
+
+export async function getMacroTarget(accessToken: string, userId: string) {
+  return request<MacroTarget | null>(accessToken, `/meal-logs/targets/${userId}`);
+}
+
+export async function getMacroTargetHistory(accessToken: string, userId: string) {
+  return request<{ targets: MacroTarget[] }>(accessToken, `/meal-logs/targets/${userId}/history`);
+}
+
+export async function setMacroTarget(
+  accessToken: string,
+  userId: string,
+  payload: { title: string; carbs_pct: number; protein_pct: number; fat_pct: number },
+) {
+  return request<MacroTarget>(accessToken, `/meal-logs/targets/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listUploadedRecords(accessToken: string, documentType = "all") {
   return request<RecordUploadsResponse>(accessToken, `/records/uploads?document_type=${encodeURIComponent(documentType)}`);
+}
+
+export type CaseloadMedicalRecordsResponse = {
+  records: Array<Record<string, unknown>>;
+};
+
+export async function listCaseloadMedicalRecords(accessToken: string) {
+  return request<CaseloadMedicalRecordsResponse>(accessToken, "/records/uploads/caseload");
+}
+
+export async function requestMedicalRecordAccess(accessToken: string, recordId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/uploads/${recordId}/request-access`, {
+    method: "POST",
+  });
+}
+
+export async function withdrawMedicalRecordConsent(accessToken: string, recordId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/uploads/${recordId}/withdraw-consent`, {
+    method: "POST",
+  });
+}
+
+export async function restoreMedicalRecordConsent(accessToken: string, recordId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/uploads/${recordId}/restore-consent`, {
+    method: "POST",
+  });
 }
 
 export async function getUploadedRecordDetail(accessToken: string, recordId: string) {
@@ -1163,6 +1420,69 @@ export async function acknowledgeIdmtHandoff(accessToken: string, handoffId: str
   });
 }
 
+export type CoordinationItemsResponse = {
+  items: Array<Record<string, unknown>>;
+};
+
+export async function listCoordinationItems(accessToken: string) {
+  return request<CoordinationItemsResponse>(accessToken, "/records/coordination-items");
+}
+
+export async function raiseCoordinationItem(
+  accessToken: string,
+  payload: { user_id: string; title: string; trigger_category: string; trigger_detail?: string; affects: string },
+) {
+  return request<Record<string, unknown>>(accessToken, "/records/coordination-items", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function acknowledgeCoordinationItem(accessToken: string, itemId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/coordination-items/${itemId}/acknowledge`, {
+    method: "POST",
+  });
+}
+
+export async function closeCoordinationItem(accessToken: string, itemId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/coordination-items/${itemId}/close`, {
+    method: "POST",
+  });
+}
+
+export type PtimRecommendationsResponse = {
+  recommendations: Array<Record<string, unknown>>;
+};
+
+export async function listPtimRecommendations(accessToken: string, fiscalYear: number, quarter: number) {
+  return request<PtimRecommendationsResponse>(
+    accessToken,
+    `/records/ptim-recommendations?fiscal_year=${fiscalYear}&quarter=${quarter}`,
+  );
+}
+
+export async function createPtimRecommendation(
+  accessToken: string,
+  payload: { fiscal_year: number; quarter: number; title: string; body: string; subject: string; owners: string[]; due_date?: string },
+) {
+  return request<Record<string, unknown>>(accessToken, "/records/ptim-recommendations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markPtimRecommendationDone(accessToken: string, recommendationId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/ptim-recommendations/${recommendationId}/done`, {
+    method: "POST",
+  });
+}
+
 export async function downloadIdmtHandoffSummary(accessToken: string, handoffId: string) {
   const response = await fetch(buildUrl(`/admin/idmt-handoffs/${handoffId}/download`), {
     headers: {
@@ -1286,6 +1606,111 @@ export type TodayPtSessionsResponse = {
 
 export async function getTodayPtSessions(accessToken: string) {
   return request<TodayPtSessionsResponse>(accessToken, "/admin/pt-sessions/today");
+}
+
+export type ChecklistItem = {
+  label: string;
+  done: boolean;
+};
+
+export type SpecialistSessionSummary = {
+  id: string;
+  provider_id: string;
+  provider_name: string | null;
+  provider_role: string;
+  session_date: string;
+  start_time: string;
+  session_type: string;
+  attendee_user_ids: string[];
+  attendee_count: number;
+  group_label: string | null;
+  topic: string | null;
+  capacity: number | null;
+  capacity_pct: number | null;
+  status: string;
+  prep_checklist: ChecklistItem[];
+  prep_ready: boolean;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_minutes: number | null;
+  created_at: string;
+};
+
+export type SpecialistSessionsResponse = {
+  date?: string;
+  window_days?: number;
+  sessions: SpecialistSessionSummary[];
+};
+
+export async function createSpecialistSession(
+  accessToken: string,
+  payload: {
+    session_date: string;
+    start_time: string;
+    session_type?: "individual" | "group";
+    attendee_user_ids?: string[];
+    group_label?: string;
+    topic?: string;
+    capacity?: number;
+    prep_checklist_items?: string[];
+  },
+) {
+  return request<SpecialistSessionSummary>(accessToken, "/admin/specialist-sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSpecialistSession(accessToken: string, sessionId: string, payload: { status: string }) {
+  return request<SpecialistSessionSummary>(accessToken, `/admin/specialist-sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function startSpecialistSession(accessToken: string, sessionId: string) {
+  return request<SpecialistSessionSummary>(accessToken, `/admin/specialist-sessions/${sessionId}/start`, {
+    method: "POST",
+  });
+}
+
+export async function toggleSpecialistSessionChecklistItem(
+  accessToken: string,
+  sessionId: string,
+  payload: { label: string; done: boolean },
+) {
+  return request<SpecialistSessionSummary>(accessToken, `/admin/specialist-sessions/${sessionId}/checklist`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTodaySpecialistSessions(accessToken: string) {
+  return request<SpecialistSessionsResponse>(accessToken, "/admin/specialist-sessions/today");
+}
+
+export async function getUpcomingSpecialistSessions(accessToken: string, days = 14) {
+  return request<SpecialistSessionsResponse>(accessToken, `/admin/specialist-sessions/upcoming?days=${days}`);
+}
+
+export type SpecialistSessionQueueSummary = {
+  today_count: number;
+  today_follow_up_count: number;
+  today_new_count: number;
+  today_prep_ready_count: number;
+  week_count: number;
+  week_start: string;
+  week_end: string;
+  avg_duration_minutes: number | null;
+  duration_window_days: number;
+  duration_sample_size: number;
+};
+
+export async function getSpecialistSessionQueueSummary(accessToken: string) {
+  return request<SpecialistSessionQueueSummary>(accessToken, "/admin/specialist-sessions/queue-summary");
 }
 
 export async function downloadMessageAttachment(accessToken: string, messageId: string) {
