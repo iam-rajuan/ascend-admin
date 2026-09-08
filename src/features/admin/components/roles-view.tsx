@@ -17,16 +17,78 @@ import { AccessibleDialog } from "@/components/ui/accessible-dialog";
 import { Lock, AlertTriangle } from "lucide-react";
 
 function formatQuestionRows(
-  rows: Array<{ id: string; readiness_component: string; routing: string; direction: string }>,
+  rows: Array<{
+    id: string;
+    readiness_component: string;
+    routing: string;
+    direction: string;
+    reverse_scored?: boolean;
+    has_provider_flag_trigger?: boolean;
+  }>,
 ) {
   return rows.map((row) => ({
     id: row.id,
     driver: row.readiness_component.replace(" Readiness", ""),
     direction: row.direction,
     routing: row.routing,
-    validation: "Valid",
+    reverseScored: row.reverse_scored ?? false,
+    providerFlagTrigger: row.has_provider_flag_trigger ?? false,
     highlight: row.id === "W5" || row.id === "M5",
   }));
+}
+
+function QuestionRegistryTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: ReturnType<typeof formatQuestionRows>;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-1">
+        <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">{title}</span>
+      </div>
+      <div className="overflow-x-auto text-xs">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="text-slate-400 border-b border-slate-100 dark:border-white/5 uppercase text-[9px]">
+              <th className="pb-2 font-bold w-16">ID</th>
+              <th className="pb-2 font-bold">Driver</th>
+              <th className="pb-2 font-bold">Direction</th>
+              <th className="pb-2 font-bold">Routing</th>
+              <th className="pb-2 font-bold">Reverse-scored</th>
+              <th className="pb-2 font-bold">Provider flag</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-mono text-[11px]">
+            {rows.map((row) => (
+              <tr key={row.id} className={`align-middle ${row.highlight ? "bg-amber-500/5" : ""}`}>
+                <td className="py-2.5 font-bold text-slate-500">{row.id}</td>
+                <td className="py-2.5 text-slate-800 dark:text-white font-sans">{row.driver}</td>
+                <td className="py-2.5 text-slate-600 dark:text-slate-400 font-sans">{row.direction}</td>
+                <td className="py-2.5 text-slate-800 dark:text-slate-300 font-sans">{row.routing}</td>
+                <td className="py-2.5 font-sans">{row.reverseScored ? "Yes" : "No"}</td>
+                <td className="py-2.5 font-sans">
+                  {row.providerFlagTrigger ? (
+                    <span className="inline-flex items-center gap-1.5 text-amber-500 font-bold">
+                      <span className="size-1.5 rounded-full bg-amber-500"></span>
+                      Yes
+                    </span>
+                  ) : (
+                    "No"
+                  )}
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr><td colSpan={6} className="py-4 text-center text-slate-400 font-sans">No questions in this set.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function RolesView({
@@ -421,6 +483,167 @@ export function RolesView({
           </table>
         </div>
       </div>
+
+      {/* 5. Accounts & Onboarding Section */}
+      {adminStore.accountsSummary && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Accounts &amp; onboarding</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Status · access expiration · assigned providers · effective permissions · Purpose consent (separate)
+              </p>
+            </div>
+            <span className="px-2 py-0.5 bg-[var(--brand-color)]/10 text-[var(--brand-color)] text-[9px] font-bold rounded-full uppercase">
+              Live
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Account status</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.account_status.active_count} active ·{" "}
+                  {adminStore.accountsSummary.account_status.expired_count} expired
+                </p>
+                <p className="text-[10px] text-slate-400 tabular-nums">
+                  {adminStore.accountsSummary.account_status.total_count} accounts total
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Assigned providers</span>
+                <p className="font-bold text-slate-800 dark:text-white">
+                  {adminStore.accountsSummary.assigned_providers.always_available_pathways.join(" + ") || "—"}
+                </p>
+                <p className="text-[10px] text-slate-400">Always-available pathways · per-caseload assignment</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Onboarding</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.onboarding.in_flight_count} in flight
+                </p>
+                <p className="text-[10px] text-slate-400 tabular-nums">
+                  {adminStore.accountsSummary.onboarding.awaiting_role_confirmation_count} awaiting role confirmation ·
+                  Airman accounts only
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Effective permissions</span>
+                <p className="font-bold text-slate-800 dark:text-white">RBAC matrix above</p>
+                <p className="text-[10px] text-slate-400">{adminStore.accountsSummary.effective_permissions.note}</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Access expiration</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.access_expiration.expiring_soon_30d_count} expiring in 30d ·{" "}
+                  {adminStore.accountsSummary.access_expiration.expired_count} expired
+                </p>
+                {/* Deliberately the backend's own note, not the mock's "all scopes
+                    renew automatically on annual review" - access_expires_at is
+                    never auto-renewed, renewal is a manual Admin action. */}
+                <p className="text-[10px] text-slate-400">{adminStore.accountsSummary.access_expiration.renewal_note}</p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Purpose consent (separate)</span>
+                <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                  {adminStore.accountsSummary.purpose_consent.active_count} active ·{" "}
+                  {adminStore.accountsSummary.purpose_consent.withdrawn_count} withdrawn
+                </p>
+                <p className="text-[10px] text-slate-400">Revoked consent removes Chaplain pathway access immediately</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Contract Question Registry Section */}
+      {questionRegistry && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+                Contract Question Registry · {questionRegistry.total_questions} approved questions
+              </h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                O1–O20 + D1–D6 + W1–W10 + M1–M10 = {questionRegistry.total_questions} · versioned · scoring direction · routing · provider flag
+              </p>
+              {adminStore.systemOverview?.reverse_scoring_status && (
+                <p className="text-[10px] text-slate-400 mt-1 max-w-2xl">
+                  Reverse-scoring: {adminStore.systemOverview.reverse_scoring_status}
+                </p>
+              )}
+            </div>
+            <span
+              className={`px-2 py-0.5 text-[9px] font-bold rounded uppercase whitespace-nowrap ${
+                activeQuestionVersion === "No active version"
+                  ? "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                  : "bg-emerald-500/10 text-emerald-500"
+              }`}
+            >
+              {activeQuestionVersion}
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-1">
+              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Outcomes · O1–O20</span>
+              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                <button
+                  onClick={() => setOutcomesPage(1)}
+                  className={`px-2 py-0.5 rounded font-bold cursor-pointer ${outcomesPage === 1 ? "bg-[var(--brand-color)] text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+                  type="button"
+                >
+                  1
+                </button>
+                <button
+                  onClick={() => setOutcomesPage(2)}
+                  className={`px-2 py-0.5 rounded font-bold cursor-pointer ${outcomesPage === 2 ? "bg-[var(--brand-color)] text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+                  type="button"
+                >
+                  2
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-100 dark:border-white/5 uppercase text-[9px]">
+                    <th className="pb-2 font-bold w-16">ID</th>
+                    <th className="pb-2 font-bold">Driver</th>
+                    <th className="pb-2 font-bold">Direction</th>
+                    <th className="pb-2 font-bold">Routing</th>
+                    <th className="pb-2 font-bold">Reverse-scored</th>
+                    <th className="pb-2 font-bold">Provider flag</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-white/5 font-mono text-[11px]">
+                  {currentOutcomes.map((row) => (
+                    <tr key={row.id} className="align-middle">
+                      <td className="py-2.5 font-bold text-slate-500">{row.id}</td>
+                      <td className="py-2.5 text-slate-800 dark:text-white font-sans">{row.driver}</td>
+                      <td className="py-2.5 text-slate-600 dark:text-slate-400 font-sans">{row.direction}</td>
+                      <td className="py-2.5 text-slate-800 dark:text-slate-300 font-sans">{row.routing}</td>
+                      <td className="py-2.5 font-sans">{row.reverseScored ? "Yes" : "No"}</td>
+                      <td className="py-2.5 font-sans">{row.providerFlagTrigger ? "Yes" : "No"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <QuestionRegistryTable title="Drivers · D1–D6 (daily)" rows={driversData} />
+          <QuestionRegistryTable title="Weekly · W1–W10" rows={weeklyData} />
+          <QuestionRegistryTable title="Monthly · M1–M10" rows={monthlyData} />
+        </div>
+      )}
 
       {/* RBAC CONFIRM BOTTOM BAR */}
       {rbacChanged && (

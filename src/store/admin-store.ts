@@ -23,6 +23,8 @@ import {
   getAdminScopeConfigs,
   getAdminScopeMatrix,
   getAdminSystemDiagnostics,
+  getAdminTrainingComplianceSummary,
+  getAdminPrsQcpReport,
   getAdminSystemOverview,
   getAdminUtilizationEvents,
   type AdminAccountsOnboardingSummary,
@@ -47,6 +49,8 @@ import {
   type AdminScopeMatrixRow,
   type AdminScopeResolveResponse,
   type AdminSystemDiagnostics,
+  type AdminTrainingComplianceSummary,
+  type AdminPrsQcpReport,
   type AdminSystemOverview,
   type AdminUtilizationEvent,
   resolveAdminScope,
@@ -149,6 +153,8 @@ export type AdminStore = {
   exportHistory: AdminExportRecord[];
   systemOverview: AdminSystemOverview | null;
   systemDiagnostics: AdminSystemDiagnostics | null;
+  trainingComplianceSummary: AdminTrainingComplianceSummary | null;
+  prsQcpReport: AdminPrsQcpReport | null;
   orgUnits: AdminOrgUnit[];
   credentials: AdminCredential[];
   equipmentGaps: AdminEquipmentGap[];
@@ -167,6 +173,7 @@ export type AdminStore = {
   updateRoleCount: (roleId: string, value: string) => void;
   addActivity: (entry: { action: string; actor: string; reason?: string; scope: string; tag?: ActivityItem["tag"]; tagColor?: ActivityItem["tagColor"] }) => void;
   initialize: (accessToken: string) => Promise<void>;
+  refreshDiagnostics: (accessToken: string) => Promise<{ ok: boolean; error?: string }>;
   refreshScopeResolve: (accessToken: string) => Promise<void>;
   saveAdminScopeConfig: (accessToken: string) => Promise<{ ok: boolean; error?: string }>;
   approveConfirmation: (accessToken: string, id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -403,6 +410,8 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
   exportHistory: [],
   systemOverview: null,
   systemDiagnostics: null,
+  trainingComplianceSummary: null,
+  prsQcpReport: null,
   orgUnits: [],
   credentials: [],
   equipmentGaps: [],
@@ -505,6 +514,8 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         exportHistory,
         systemOverview,
         systemDiagnostics,
+        trainingComplianceSummary,
+        prsQcpReport,
         orgUnits,
         credentials,
         equipmentGaps,
@@ -527,6 +538,8 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         getAdminExportLogHistory(accessToken),
         getAdminSystemOverview(accessToken),
         getAdminSystemDiagnostics(accessToken),
+        getAdminTrainingComplianceSummary(accessToken),
+        getAdminPrsQcpReport(accessToken),
         getAdminOrgUnits(accessToken),
         getAdminCredentials(accessToken),
         getAdminEquipmentGaps(accessToken),
@@ -561,6 +574,8 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         exportHistory: exportHistory.exports,
         systemOverview,
         systemDiagnostics,
+        trainingComplianceSummary,
+        prsQcpReport,
         orgUnits: orgUnits.units,
         credentials: credentials.credentials,
         equipmentGaps: equipmentGaps.gaps,
@@ -580,6 +595,18 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
         isLoading: false,
         loadError: formatAdminApiError(error),
       });
+    }
+  },
+  refreshDiagnostics: async (accessToken) => {
+    try {
+      const systemDiagnostics = await getAdminSystemDiagnostics(accessToken);
+      set({
+        systemDiagnostics,
+        services: toServiceStatus(systemDiagnostics),
+      });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatAdminApiError(error) };
     }
   },
   refreshScopeResolve: async (accessToken) => {

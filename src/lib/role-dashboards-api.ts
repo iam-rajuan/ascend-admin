@@ -39,6 +39,28 @@ export type LeadershipDashboardSummary = {
   }>;
 };
 
+export type LeadershipHoursCoverage = {
+  role: string;
+  year: number;
+  entries_with_schedule: number;
+  total_scheduled_hours: number;
+  total_worked_hours: number;
+  worked_pct_of_scheduled: number | null;
+  missed_count: number;
+  missed_by_reason: Record<string, number>;
+};
+
+export type LeadershipPrsProviderRow = {
+  provider_id: string;
+  provider_name: string | null;
+  role: string;
+  logged_hours: number;
+  rsd_hours: number;
+  target_hours: number;
+  coverage_pct: number;
+  meets_95pct_evidence: boolean;
+};
+
 export type LeadershipAggregate = {
   hero: {
     cohort_size: number;
@@ -104,13 +126,52 @@ export type LeadershipAggregate = {
     }>;
   };
   min_cohort_size: number;
-  assessment_targets?: Record<string, unknown> | null;
-  feedback_sessions?: Record<string, unknown> | null;
-  scs_hours_coverage?: Record<string, unknown> | null;
-  ptim_hours_coverage?: Record<string, unknown> | null;
-  prs_providers?: Record<string, unknown> | null;
-  rsd_coverage?: Record<string, unknown> | null;
-  oft_metrics?: Record<string, unknown> | null;
+  assessment_targets?: {
+    total_operators: number;
+    eligible_6_month_cohort_size: number;
+    eligible_6_month_completion_pct: number | null;
+    eligible_6_month_target_pct: number;
+    eligible_12_month_cohort_size: number;
+    eligible_12_month_completion_pct: number | null;
+    eligible_12_month_target_pct: number;
+  } | null;
+  feedback_sessions?: {
+    period_start: string;
+    period_end: string;
+    total_assessments_in_period: number;
+    feedback_sessions_completed: number;
+    completion_pct: number | null;
+  } | null;
+  scs_hours_coverage?: LeadershipHoursCoverage | null;
+  ptim_hours_coverage?: LeadershipHoursCoverage | null;
+  prs_providers?: LeadershipPrsProviderRow[] | null;
+  rsd_coverage?: {
+    year: number;
+    total_rsd_hours: number;
+    session_count: number;
+  } | null;
+  oft_metrics?: {
+    month: string | null;
+    status_counts: Record<string, number>;
+    pass_count: number;
+    fail_count: number;
+    pass_rate_pct: number | null;
+    avg_items_passed: number | null;
+    avg_items_total: number | null;
+    government_entry_compliance_pct: number | null;
+    annual_test_count_distribution: Record<string, number>;
+    by_flight?: {
+      min_cohort_size: number;
+      flights: Array<{
+        flight_id: string;
+        flight_name: string;
+        cohort_size: number;
+        pass_count: number;
+        fail_count: number;
+        pass_rate_pct: number | null;
+      }>;
+    };
+  } | null;
   oft_due_soon_count?: number | null;
 };
 
@@ -230,12 +291,33 @@ export type LeadershipBriefingDetail = {
   archived_at: string | null;
 };
 
+// Real per-operator row from provider_dashboard_service._build_scs_row.
+export type ScsOperatorRow = {
+  user_id: string;
+  user_name: string;
+  current_ops_score: number | null;
+  current_ops_band: string | null;
+  physical_readiness: number | null;
+  sleep_readiness: number | null;
+  checked_in_today: boolean;
+  missed_workouts_recent: number;
+  reported_limitation_recent: boolean;
+  oft_status: string;
+  reconditioning_active: boolean;
+  ptim_clearance_status: string | null;
+  active_risk_flag: string | null;
+  driver_flag: string | null;
+  ptim_referral_status: string | null;
+};
+
 export type ScsDashboardData = {
   assigned_count: number;
   checked_in_today_count: number;
   missed_checkin_today_count: number;
   low_ops_count: number;
-  operators: Array<Record<string, unknown>>;
+  oft_cleared_today_count: number;
+  reconditioning_awaiting_review_count: number;
+  operators: ScsOperatorRow[];
 };
 
 export type PtimDashboardData = {
@@ -243,6 +325,49 @@ export type PtimDashboardData = {
   active_reconditioning_count: number;
   pending_review_total: number;
   operators: Array<Record<string, unknown>>;
+};
+
+// Real shape from provider_dashboard_service.get_specialist_dashboard -
+// shared by Nutritionist/Mental Performance/Chaplain, NOT the same shape
+// as PtimDashboardData above (this dashboard has no
+// active_reconditioning_count/pending_review_total fields).
+export type SpecialistDashboardData = {
+  pathway_key: string;
+  relevant_readiness_component: string | null;
+  assigned_count: number;
+  open_request_count: number;
+  low_consistency_operator_count: number | null;
+  operators: Array<Record<string, unknown>>;
+  notes: Array<Record<string, unknown>>;
+  recent_requests: Array<Record<string, unknown>>;
+};
+
+// Real shape from provider_dashboard_service.get_mental_driver_scores -
+// Mental Performance-only, k-gated cohort aggregate.
+export type MentalDriverScoresResponse = {
+  cohort_size: number;
+  cohort_k: number;
+  window_days: number;
+  suppressed: boolean;
+  drivers: Record<string, number | null> | null;
+};
+
+// Real shape from provider_dashboard_service.get_meal_consistency_by_flight -
+// Nutritionist-only, k-gated per-flight aggregate.
+export type MealConsistencyByFlightResponse = {
+  window_days: number;
+  min_cohort_size: number;
+  total_flights: number;
+  flights_meeting_cohort_minimum: number;
+  flights: Array<{
+    flight_id: string;
+    flight_name: string;
+    cohort_size: number;
+    flagged_members: number;
+    flagged_rate_pct: number;
+    consistency_level: string;
+    pending_review_count: number;
+  }>;
 };
 
 export type ActiveRecommendationsResponse = {
@@ -283,15 +408,46 @@ export type ReconditioningRestrictionsResponse = {
   restrictions: Array<Record<string, unknown>>;
 };
 
+export type FlightReconditioningLoad = {
+  flight_id: string;
+  flight_name: string;
+  cohort_size: number;
+  active_reconditioning_count: number;
+  load_pct: number;
+};
+
+// Real shape from coverage_service.get_reconditioning_load_by_flight.
+// Deliberately only reconditioning load - PT/OFT lanes and a per-flight
+// "capacity" number have no real data source anywhere in the backend and
+// were never built (see the service method's own docstring).
 export type CoverageLoadByFlightResponse = {
   min_cohort_size: number;
   total_flights: number;
   flights_meeting_cohort_minimum: number;
-  flights: Array<Record<string, unknown>>;
+  flights: FlightReconditioningLoad[];
+};
+
+export type PerformanceSummaryEntry = {
+  id: string;
+  user_id: string;
+  created_by: string;
+  reviewer_role: string;
+  review_date: string;
+  approved_visibility_level: string;
+  expiration_or_review_due_date: string | null;
+  specialist_notes_link: string[];
+  created_at: string;
+  injury_history_summary: string | null;
+  limitations_summary: string | null;
+  return_to_performance_considerations: string | null;
+  nutrition_considerations: string | null;
+  sleep_recovery_considerations: string | null;
+  medication_allergy_considerations_if_authorized: string | null;
+  withheld_fields: string[];
 };
 
 export type PerformanceSummariesResponse = {
-  summaries: Array<Record<string, unknown>>;
+  summaries: PerformanceSummaryEntry[];
 };
 
 export type RoutingLevelsResponse = {
@@ -309,7 +465,29 @@ export type MessageThreadsResponse = {
   threads: Array<Record<string, unknown>>;
 };
 
-export type MessageThreadDetailResponse = Record<string, unknown>;
+export type MessageEntry = {
+  id: string;
+  thread_key: string;
+  thread_id: string | null;
+  sender_id: string;
+  sender_role: string;
+  recipient_id: string | null;
+  body: string;
+  is_read: boolean;
+  source_type: string;
+  related_recommendation_id: string | null;
+  attachment: { file_name: string; file_size_bytes: number } | null;
+  created_at: string;
+};
+
+export type MessageThreadDetailResponse = {
+  thread_key: string;
+  other_user_id: string;
+  other_user_name: string | null;
+  other_user_role: string;
+  pathway_context: Record<string, unknown> | null;
+  messages: MessageEntry[];
+};
 
 export type RecordUploadsResponse = {
   records: Array<Record<string, unknown>>;
@@ -340,7 +518,19 @@ export type InjuryReportByFlightResponse = {
 
 export type InjuryReportQuartersResponse = {
   fiscal_year: number;
-  quarters: Array<InjuryReportByFlightResponse & { quarter: number }>;
+  quarters: Array<
+    InjuryReportByFlightResponse & {
+      quarter: number;
+      total_injuries: number;
+      l4_plus_count: number;
+      days_lost: number;
+      injury_rate_per_100_person_months: number | null;
+      total_injuries_delta: number | null;
+      l4_plus_count_delta: number | null;
+      days_lost_delta: number | null;
+      injury_rate_per_100_person_months_delta: number | null;
+    }
+  >;
 };
 
 export type InjuryTypeBreakdownResponse = {
@@ -363,10 +553,31 @@ export type UpcomingPtSessionsResponse = {
   sessions: Array<Record<string, unknown>>;
 };
 
+export type LeaveRecordSummary = {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  leave_type: string;
+  leave_type_label: string;
+  start_date: string;
+  end_date: string;
+  note: string | null;
+  created_at: string;
+};
+
+export type LeaveOverlapPair = {
+  record_id_a: string;
+  record_id_b: string;
+  overlap_start: string;
+  overlap_end: string;
+  overlap_days: number;
+};
+
+// Real shape from leave_service.list_overlap_window.
 export type LeaveOverlapResponse = {
-  days: number;
-  overlapping_pairs?: Array<Record<string, unknown>>;
-  overlaps?: Array<Record<string, unknown>>;
+  window_days: number;
+  records: LeaveRecordSummary[];
+  overlapping_pairs: LeaveOverlapPair[];
 };
 
 export type LeaveHistoryResponse = {
@@ -376,6 +587,12 @@ export type LeaveHistoryResponse = {
 
 function buildUrl(path: string) {
   return `${env.NEXT_PUBLIC_API_BASE_URL}${path}`;
+}
+
+/** Same host/path as the real REST API, http(s) swapped for ws(s) - for the real `/messaging/live` change-stream socket. */
+export function buildWsUrl(path: string, accessToken: string) {
+  const wsBase = env.NEXT_PUBLIC_API_BASE_URL.replace(/^http/, "ws");
+  return `${wsBase}${path}?token=${encodeURIComponent(accessToken)}`;
 }
 
 async function parseEnvelope<T>(response: Response): Promise<T> {
@@ -445,9 +662,11 @@ export async function getLeadershipReportTemplates(accessToken: string) {
   return request<{ templates: LeadershipReportTemplate[] }>(accessToken, "/dashboard/leadership/report-templates");
 }
 
-export async function useLeadershipReportTemplate(accessToken: string, templateKey: string) {
+export async function useLeadershipReportTemplate(accessToken: string, templateKey: string, name?: string) {
   return request<Record<string, unknown>>(accessToken, `/dashboard/leadership/report-templates/${templateKey}/use`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(name ? { name } : {}),
   });
 }
 
@@ -662,6 +881,52 @@ export async function getCoverageLoadByFlight(accessToken: string) {
   return request<CoverageLoadByFlightResponse>(accessToken, "/admin/coverage/reconditioning-load-by-flight");
 }
 
+export type ScsWeeklyAvailabilityProvider = {
+  provider_id: string;
+  provider_name: string;
+  days: Record<string, number>;
+  week_total_hours: number;
+};
+
+// Real shape from coverage_service.get_scs_weekly_availability.
+export type ScsWeeklyAvailabilityResponse = {
+  week_start: string;
+  week_end: string;
+  day_keys: string[];
+  providers: ScsWeeklyAvailabilityProvider[];
+};
+
+export async function getScsWeeklyAvailability(accessToken: string) {
+  return request<ScsWeeklyAvailabilityResponse>(accessToken, "/admin/coverage/scs-weekly-availability");
+}
+
+// Real shape from coverage_service.get_schedule_vs_worked_summary.
+export type ScheduleVsWorkedResponse = {
+  role: string;
+  year: number;
+  entries_with_schedule: number;
+  total_scheduled_hours: number;
+  total_worked_hours: number;
+  worked_pct_of_scheduled: number | null;
+  missed_count: number;
+  missed_by_reason: Record<string, number>;
+};
+
+export async function getScheduleVsWorked(accessToken: string, role: string, year: number) {
+  return request<ScheduleVsWorkedResponse>(accessToken, `/admin/coverage/schedule-vs-worked?role=${role}&year=${year}`);
+}
+
+// Real shape from coverage_service.get_rsd_summary.
+export type RsdSummaryResponse = {
+  year: number;
+  total_rsd_hours: number;
+  session_count: number;
+};
+
+export async function getRsdSummary(accessToken: string, year: number) {
+  return request<RsdSummaryResponse>(accessToken, `/admin/coverage/rsd-summary?year=${year}`);
+}
+
 export async function getPerformanceSummaries(accessToken: string, userId: string) {
   return request<PerformanceSummariesResponse>(accessToken, `/performance-summaries/${userId}`);
 }
@@ -747,8 +1012,233 @@ export async function getPtimDashboard(accessToken: string) {
   return request<PtimDashboardData>(accessToken, "/dashboard/ptim");
 }
 
+export async function getSpecialistDashboard(accessToken: string) {
+  return request<SpecialistDashboardData>(accessToken, "/dashboard/specialist");
+}
+
+export async function getMentalDriverScores(accessToken: string) {
+  return request<MentalDriverScoresResponse>(accessToken, "/dashboard/mp/mental-drivers");
+}
+
+export async function getMealConsistencyByFlight(accessToken: string) {
+  return request<MealConsistencyByFlightResponse>(accessToken, "/dashboard/nutrition/meal-consistency");
+}
+
+export type MealLogEntry = {
+  id: string;
+  user_id: string;
+  meal_date: string;
+  meal_type: string;
+  description: string;
+  calories: number | null;
+  carbs_g: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  flagged: boolean;
+  flag_reason: string | null;
+  logged_by_id: string;
+  created_at: string;
+};
+
+export type MealLogsResponse = {
+  meal_logs: MealLogEntry[];
+};
+
+export async function getMealLogs(accessToken: string, userId: string, days = 60) {
+  return request<MealLogsResponse>(accessToken, `/meal-logs/${userId}?days=${days}`);
+}
+
+export async function updateMealLogFlag(
+  accessToken: string,
+  mealLogId: string,
+  payload: { flagged: boolean; flag_reason?: string | null },
+) {
+  return request<MealLogEntry>(accessToken, `/meal-logs/${mealLogId}/flag`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export type CohortMacroDistribution = {
+  window_days: number;
+  min_cohort_size: number;
+  cohort_size: number;
+  meets_cohort_minimum: boolean;
+  carbs_pct: number | null;
+  protein_pct: number | null;
+  fat_pct: number | null;
+  entries_with_macros: number;
+  on_target_band_pct: number | null;
+  on_target_entries: number;
+  entries_with_target: number;
+};
+
+export async function getCohortMacroDistribution(accessToken: string) {
+  return request<CohortMacroDistribution>(accessToken, "/dashboard/nutrition/macro-distribution");
+}
+
+export type HydrationAlert = {
+  flight_id: string;
+  flight_name: string;
+  streak_days: number;
+  latest_adherence_pct: number | null;
+  threshold_pct: number;
+  members: Array<{ id: string; name: string | null; messageable: boolean }>;
+};
+
+export type HydrationAlertsResponse = {
+  window_days: number;
+  threshold_pct: number;
+  min_streak_days: number;
+  min_cohort_size: number;
+  alerts: HydrationAlert[];
+};
+
+export async function getHydrationAlerts(accessToken: string) {
+  return request<HydrationAlertsResponse>(accessToken, "/dashboard/nutrition/hydration-alerts");
+}
+
+export type SpecialistNoteEntry = {
+  id: string;
+  user_id: string;
+  specialist_id: string;
+  specialist_name: string | null;
+  specialist_type: string;
+  title: string;
+  note_date: string;
+  note_type: string;
+  escalated: boolean;
+  user_concern: string;
+  action_assigned: string | null;
+  follow_up_needed: boolean;
+  follow_up_due_date: string | null;
+  status: string;
+  documentation_status: string;
+  signed_at: string | null;
+  draft_expired: boolean;
+  is_redacted: boolean;
+  created_at: string;
+};
+
+export async function listSpecialistNotes(accessToken: string, userId: string) {
+  return request<{ notes: SpecialistNoteEntry[] }>(accessToken, `/specialist-notes/${userId}`);
+}
+
+export async function createSpecialistNote(
+  accessToken: string,
+  userId: string,
+  payload: {
+    title: string;
+    user_concern: string;
+    action_assigned?: string;
+    follow_up_needed?: boolean;
+    follow_up_due_date?: string;
+    note_type?: string;
+    escalated?: boolean;
+  },
+) {
+  return request<SpecialistNoteEntry>(accessToken, `/specialist-notes/${userId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function signSpecialistNote(accessToken: string, noteId: string) {
+  return request<SpecialistNoteEntry>(accessToken, `/specialist-notes/${noteId}/sign`, {
+    method: "PATCH",
+  });
+}
+
+export type MyAuditLogEntry = {
+  id: string;
+  event_type: string;
+  actor_id: string | null;
+  actor_role: string;
+  target_entity_type: string;
+  target_entity_id: string;
+  summary_message: string;
+  metadata_payload: Record<string, unknown> | null;
+  outcome_status: string;
+  created_at: string;
+};
+
+export type MyAuditLogResponse = {
+  total: number;
+  page: number;
+  page_size: number;
+  entries: MyAuditLogEntry[];
+};
+
+export async function getMyAuditLog(accessToken: string, page = 1, pageSize = 20) {
+  return request<MyAuditLogResponse>(accessToken, `/admin/audit-log/mine?page=${page}&page_size=${pageSize}`);
+}
+
+export type MacroTarget = {
+  id: string;
+  user_id: string;
+  title: string;
+  carbs_pct: number;
+  protein_pct: number;
+  fat_pct: number;
+  status: string;
+  set_by_id: string;
+  started_at: string;
+  ended_at: string | null;
+  adherence_pct: number | null;
+  entries_with_macros: number;
+  updated_at: string;
+};
+
+export async function getMacroTarget(accessToken: string, userId: string) {
+  return request<MacroTarget | null>(accessToken, `/meal-logs/targets/${userId}`);
+}
+
+export async function getMacroTargetHistory(accessToken: string, userId: string) {
+  return request<{ targets: MacroTarget[] }>(accessToken, `/meal-logs/targets/${userId}/history`);
+}
+
+export async function setMacroTarget(
+  accessToken: string,
+  userId: string,
+  payload: { title: string; carbs_pct: number; protein_pct: number; fat_pct: number },
+) {
+  return request<MacroTarget>(accessToken, `/meal-logs/targets/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listUploadedRecords(accessToken: string, documentType = "all") {
   return request<RecordUploadsResponse>(accessToken, `/records/uploads?document_type=${encodeURIComponent(documentType)}`);
+}
+
+export type CaseloadMedicalRecordsResponse = {
+  records: Array<Record<string, unknown>>;
+};
+
+export async function listCaseloadMedicalRecords(accessToken: string) {
+  return request<CaseloadMedicalRecordsResponse>(accessToken, "/records/uploads/caseload");
+}
+
+export async function requestMedicalRecordAccess(accessToken: string, recordId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/uploads/${recordId}/request-access`, {
+    method: "POST",
+  });
+}
+
+export async function withdrawMedicalRecordConsent(accessToken: string, recordId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/uploads/${recordId}/withdraw-consent`, {
+    method: "POST",
+  });
+}
+
+export async function restoreMedicalRecordConsent(accessToken: string, recordId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/uploads/${recordId}/restore-consent`, {
+    method: "POST",
+  });
 }
 
 export async function getUploadedRecordDetail(accessToken: string, recordId: string) {
@@ -939,6 +1429,75 @@ export async function markIdmtHandoffTransmitted(accessToken: string, handoffId:
   });
 }
 
+export async function acknowledgeIdmtHandoff(accessToken: string, handoffId: string) {
+  return request<Record<string, unknown>>(accessToken, `/admin/idmt-handoffs/${handoffId}/acknowledge`, {
+    method: "POST",
+  });
+}
+
+export type CoordinationItemsResponse = {
+  items: Array<Record<string, unknown>>;
+};
+
+export async function listCoordinationItems(accessToken: string) {
+  return request<CoordinationItemsResponse>(accessToken, "/records/coordination-items");
+}
+
+export async function raiseCoordinationItem(
+  accessToken: string,
+  payload: { user_id: string; title: string; trigger_category: string; trigger_detail?: string; affects: string },
+) {
+  return request<Record<string, unknown>>(accessToken, "/records/coordination-items", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function acknowledgeCoordinationItem(accessToken: string, itemId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/coordination-items/${itemId}/acknowledge`, {
+    method: "POST",
+  });
+}
+
+export async function closeCoordinationItem(accessToken: string, itemId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/coordination-items/${itemId}/close`, {
+    method: "POST",
+  });
+}
+
+export type PtimRecommendationsResponse = {
+  recommendations: Array<Record<string, unknown>>;
+};
+
+export async function listPtimRecommendations(accessToken: string, fiscalYear: number, quarter: number) {
+  return request<PtimRecommendationsResponse>(
+    accessToken,
+    `/records/ptim-recommendations?fiscal_year=${fiscalYear}&quarter=${quarter}`,
+  );
+}
+
+export async function createPtimRecommendation(
+  accessToken: string,
+  payload: { fiscal_year: number; quarter: number; title: string; body: string; subject: string; owners: string[]; due_date?: string },
+) {
+  return request<Record<string, unknown>>(accessToken, "/records/ptim-recommendations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markPtimRecommendationDone(accessToken: string, recommendationId: string) {
+  return request<Record<string, unknown>>(accessToken, `/records/ptim-recommendations/${recommendationId}/done`, {
+    method: "POST",
+  });
+}
+
 export async function downloadIdmtHandoffSummary(accessToken: string, handoffId: string) {
   const response = await fetch(buildUrl(`/admin/idmt-handoffs/${handoffId}/download`), {
     headers: {
@@ -1037,11 +1596,288 @@ export async function deleteLeaveRecord(accessToken: string, leaveId: string) {
   });
 }
 
+export type PtSessionSummary = {
+  id: string;
+  lead_provider_id: string;
+  lead_provider_name: string | null;
+  lead_provider_role: string;
+  session_date: string;
+  start_time: string;
+  group_label: string;
+  focus: string;
+  focus_label: string;
+  capacity: number;
+  enrolled_count: number;
+  capacity_pct: number;
+  status: string;
+  created_at: string;
+};
+
+// Real shape from pt_session_service._list_for_date.
+export type TodayPtSessionsResponse = {
+  date: string;
+  sessions: PtSessionSummary[];
+};
+
 export async function getTodayPtSessions(accessToken: string) {
-  return request<{ sessions: Array<Record<string, unknown>> }>(accessToken, "/admin/pt-sessions/today");
+  return request<TodayPtSessionsResponse>(accessToken, "/admin/pt-sessions/today");
+}
+
+export type ChecklistItem = {
+  label: string;
+  done: boolean;
+};
+
+export type SpecialistSessionSummary = {
+  id: string;
+  provider_id: string;
+  provider_name: string | null;
+  provider_role: string;
+  session_date: string;
+  start_time: string;
+  session_type: string;
+  attendee_user_ids: string[];
+  attendee_count: number;
+  group_label: string | null;
+  topic: string | null;
+  capacity: number | null;
+  capacity_pct: number | null;
+  planned_duration_minutes: number | null;
+  status: string;
+  prep_checklist: ChecklistItem[];
+  prep_ready: boolean;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_minutes: number | null;
+  created_at: string;
+};
+
+export type SpecialistSessionsResponse = {
+  date?: string;
+  window_days?: number;
+  sessions: SpecialistSessionSummary[];
+};
+
+export async function createSpecialistSession(
+  accessToken: string,
+  payload: {
+    session_date: string;
+    start_time: string;
+    session_type?: "individual" | "group";
+    attendee_user_ids?: string[];
+    group_label?: string;
+    topic?: string;
+    capacity?: number;
+    planned_duration_minutes?: number;
+    prep_checklist_items?: string[];
+  },
+) {
+  return request<SpecialistSessionSummary>(accessToken, "/admin/specialist-sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSpecialistSession(accessToken: string, sessionId: string, payload: { status: string }) {
+  return request<SpecialistSessionSummary>(accessToken, `/admin/specialist-sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function startSpecialistSession(accessToken: string, sessionId: string) {
+  return request<SpecialistSessionSummary>(accessToken, `/admin/specialist-sessions/${sessionId}/start`, {
+    method: "POST",
+  });
+}
+
+export async function toggleSpecialistSessionChecklistItem(
+  accessToken: string,
+  sessionId: string,
+  payload: { label: string; done: boolean },
+) {
+  return request<SpecialistSessionSummary>(accessToken, `/admin/specialist-sessions/${sessionId}/checklist`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTodaySpecialistSessions(accessToken: string) {
+  return request<SpecialistSessionsResponse>(accessToken, "/admin/specialist-sessions/today");
+}
+
+export async function getUpcomingSpecialistSessions(accessToken: string, days = 14) {
+  return request<SpecialistSessionsResponse>(accessToken, `/admin/specialist-sessions/upcoming?days=${days}`);
+}
+
+export type SpecialistSessionQueueSummary = {
+  today_count: number;
+  today_follow_up_count: number;
+  today_new_count: number;
+  today_prep_ready_count: number;
+  week_count: number;
+  week_start: string;
+  week_end: string;
+  avg_duration_minutes: number | null;
+  duration_window_days: number;
+  duration_sample_size: number;
+};
+
+export async function getSpecialistSessionQueueSummary(accessToken: string) {
+  return request<SpecialistSessionQueueSummary>(accessToken, "/admin/specialist-sessions/queue-summary");
 }
 
 export async function downloadMessageAttachment(accessToken: string, messageId: string) {
   return request<RecordFileDownloadResponse>(accessToken, `/messaging/message/${messageId}/attachment`);
+}
+
+// Real shapes from chaplain_service.py - anonymized codes only, never a
+// real name or rank (matches the Chaplain/Purpose pathway's own "No rank,
+// no PII" caseload rule).
+// Real shapes from mp_service.py - anonymized codes only.
+export type MpCaseloadRow = {
+  user_id: string;
+  airman_code: string;
+  referral_reason: string | null;
+  last_session_date: string | null;
+  next_session_date: string | null;
+  queue_status: "new" | "follow_up" | "scheduled" | "active";
+};
+
+export type MpCaseloadResponse = {
+  caseload: MpCaseloadRow[];
+};
+
+export async function getMpCaseload(accessToken: string) {
+  return request<MpCaseloadResponse>(accessToken, "/mp/caseload");
+}
+
+export type MpDashboardSummary = {
+  active_caseload_count: number;
+  individual_count: number;
+  group_count: number;
+  referrals_this_week_count: number;
+  self_referrals_this_week: number;
+  scs_referrals_this_week: number;
+  pt_im_referrals_this_week: number;
+  sessions_today_count: number;
+  next_session_time: string | null;
+  next_session_airman_code: string | null;
+  follow_ups_due_today_count: number;
+  follow_ups_due_this_week_count: number;
+};
+
+export async function getMpDashboardSummary(accessToken: string) {
+  return request<MpDashboardSummary>(accessToken, "/mp/dashboard-summary");
+}
+
+export type ChaplainCaseloadRow = {
+  user_id: string;
+  airman_code: string;
+  is_new: boolean;
+  opt_in_date: string;
+  reflection_cadence: string | null;
+  last_contact_at: string | null;
+  last_contact_type: string | null;
+  suggested_action: "welcome" | "message";
+};
+
+export type ChaplainCaseloadResponse = {
+  caseload: ChaplainCaseloadRow[];
+};
+
+export async function getChaplainCaseload(accessToken: string) {
+  return request<ChaplainCaseloadResponse>(accessToken, "/chaplain/caseload");
+}
+
+export type ChaplainDashboardSummary = {
+  opted_in_count: number;
+  opted_in_count_delta_this_month: number;
+  active_reflections_count: number;
+  consults_today_count: number;
+  first_time_engagement_count: number;
+};
+
+export async function getChaplainDashboardSummary(accessToken: string) {
+  return request<ChaplainDashboardSummary>(accessToken, "/chaplain/dashboard-summary");
+}
+
+export type ChaplainOptInAuditEntry = {
+  user_id: string;
+  airman_code: string;
+  status: string;
+  status_label: string;
+  recorded_at: string;
+  method: string | null;
+  method_label: string | null;
+  witness_name: string | null;
+};
+
+export type ChaplainOptInAuditResponse = {
+  entries: ChaplainOptInAuditEntry[];
+};
+
+export type ChaplainPastoralCareSession = {
+  id: string;
+  start_time: string;
+  planned_duration_minutes: number | null;
+  airman_code: string | null;
+  group_label: string | null;
+  topic: string | null;
+  category: "first_time" | "returning" | "brief" | "group";
+  status: string;
+};
+
+export type ChaplainPastoralCareTodayResponse = {
+  sessions: ChaplainPastoralCareSession[];
+};
+
+export async function getChaplainPastoralCareToday(accessToken: string) {
+  return request<ChaplainPastoralCareTodayResponse>(accessToken, "/chaplain/pastoral-care-today");
+}
+
+export async function getChaplainOptInAudit(accessToken: string) {
+  return request<ChaplainOptInAuditResponse>(accessToken, "/chaplain/opt-in-audit");
+}
+
+// Real shape from reflection_service.py's caseload-wide serializer.
+export type CaseloadReflectionEntry = {
+  id: string;
+  theme: string;
+  body: string;
+  length_chars: number;
+  word_count: number;
+  created_at: string;
+  airman_code: string;
+  flag: "tender" | "pastoral";
+};
+
+export type CaseloadReflectionsResponse = {
+  reflections: CaseloadReflectionEntry[];
+};
+
+export async function getCaseloadReflections(
+  accessToken: string,
+  params?: { theme?: string; date_from?: string; date_to?: string },
+) {
+  const query = new URLSearchParams();
+  if (params?.theme) query.set("theme", params.theme);
+  if (params?.date_from) query.set("date_from", params.date_from);
+  if (params?.date_to) query.set("date_to", params.date_to);
+  const qs = query.toString();
+  return request<CaseloadReflectionsResponse>(accessToken, `/reflections/caseload${qs ? `?${qs}` : ""}`);
+}
+
+export type ReflectionThemeBreakdownResponse = {
+  window_days: number;
+  total_entries: number;
+  themes: Array<{ theme: string; count: number }>;
+};
+
+export async function getReflectionThemeBreakdown(accessToken: string, windowDays = 30) {
+  return request<ReflectionThemeBreakdownResponse>(accessToken, `/reflections/caseload/theme-breakdown?window_days=${windowDays}`);
 }
 

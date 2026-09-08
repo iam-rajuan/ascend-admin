@@ -77,7 +77,8 @@ function SimpleKeyValueList({ rows }: { rows: { label: string; value: string }[]
 }
 
 export function IndexView() {
-  const { loading, error, dashboard } = useLeadership();
+  const { loading, error, dashboard, briefings } = useLeadership();
+  const pendingReviewBriefings = briefings.filter((b) => b.status === "pending_review");
 
   if (loading) {
     return <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 dark:border-white/5 dark:bg-[#0e1628]">Loading live leadership data...</div>;
@@ -105,6 +106,29 @@ export function IndexView() {
           </Link>
         </div>
       </div>
+
+      {pendingReviewBriefings.length > 0 && (
+        <Link
+          href="/dashboard/leadership/briefings"
+          className="flex w-full items-center justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-5 text-left transition hover:bg-amber-500/15"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex size-9 items-center justify-center rounded-full bg-amber-500/15 text-sm font-black text-amber-500">
+              {pendingReviewBriefings.length}
+            </span>
+            <div>
+              <p className="text-sm font-bold text-slate-800 dark:text-white">
+                {pendingReviewBriefings.length} briefing{pendingReviewBriefings.length > 1 ? "s" : ""} pending review
+              </p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                {pendingReviewBriefings[0].title} · under review
+                {pendingReviewBriefings.length > 1 ? ` · +${pendingReviewBriefings.length - 1} more` : ""}
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-amber-600 dark:text-amber-400">Review →</span>
+        </Link>
+      )}
 
       <div className="grid grid-cols-2 gap-5 lg:grid-cols-4">
         <MetricCard title="Enrolled operators" value={dashboard.enrolled_operator_count.toString()} subtext="Live cohort count" />

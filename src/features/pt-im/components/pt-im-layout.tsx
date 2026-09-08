@@ -15,6 +15,7 @@ import {
   Calendar,
   ClipboardList,
   FileText,
+  ListChecks,
   LogOut,
   Moon,
   Shield,
@@ -25,6 +26,7 @@ import {
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: TrendingUp, href: "/dashboard/pt-im/dashboard" },
+  { id: "queue", label: "Injury Queue", icon: ListChecks, href: "/dashboard/pt-im/queue" },
   { id: "injury", label: "Injury Trends", icon: Activity, href: "/dashboard/pt-im/injury" },
   { id: "records", label: "Medical Records", icon: FileText, href: "/dashboard/pt-im/records" },
   { id: "quarterly", label: "Quarterly Reports", icon: Calendar, href: "/dashboard/pt-im/quarterly" },

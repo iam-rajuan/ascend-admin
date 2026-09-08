@@ -130,6 +130,11 @@ export type AdminAccountsOnboardingSummary = {
   assigned_providers: {
     always_available_pathways: string[];
   };
+  provider_workload: {
+    assigned_count: number;
+    unassigned_count: number;
+    total_provider_count: number;
+  };
   effective_permissions: {
     note: string;
   };
@@ -828,8 +833,88 @@ export async function getAdminSystemDiagnostics(accessToken: string) {
   return request<AdminSystemDiagnostics>(accessToken, "/admin/system/diagnostics");
 }
 
+export type AdminTrainingComplianceSummary = {
+  window_days: number;
+  staff_count: number;
+  total_required_items: number;
+  compliant_count: number;
+  overdue_count: number;
+  open_count: number;
+  status: "pass" | "open_items";
+  checked_at: string;
+};
+
+export type AdminTrainingComplianceItem = {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  training_type: string;
+  due_date: string;
+  completion_date: string | null;
+  certificate_uploaded: boolean;
+  submitted_to: string | null;
+  submission_status: string;
+  renewal_due_date: string | null;
+  is_overdue: boolean;
+  updated_at: string;
+};
+
+export async function getAdminTrainingComplianceSummary(accessToken: string) {
+  return request<AdminTrainingComplianceSummary>(accessToken, "/admin/training-compliance/summary");
+}
+
+export async function getAdminTrainingComplianceForUser(accessToken: string, userId: string) {
+  return request<{ items: AdminTrainingComplianceItem[] }>(accessToken, `/admin/training-compliance/${userId}`);
+}
+
+export async function upsertAdminTrainingCompliance(
+  accessToken: string,
+  userId: string,
+  payload: {
+    training_type: string;
+    due_date: string;
+    completion_date?: string | null;
+    certificate_uploaded?: boolean;
+    submitted_to?: string | null;
+    submission_status?: string;
+    renewal_due_date?: string | null;
+  },
+) {
+  return request<AdminTrainingComplianceItem>(accessToken, `/admin/training-compliance/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function getAdminSystemOverview(accessToken: string) {
   return request<AdminSystemOverview>(accessToken, "/admin/system/overview");
+}
+
+export type AdminPrsQcpProviderRow = {
+  provider_id: string;
+  provider_name: string | null;
+  role: string;
+  logged_hours: number;
+  rsd_hours: number;
+  target_hours: number;
+  coverage_pct: number;
+  meets_95pct_evidence: boolean;
+};
+
+export type AdminPrsQcpReport = {
+  year: number;
+  providers: AdminPrsQcpProviderRow[];
+  assessment_compliance: Record<string, unknown>;
+  rsd_coverage: {
+    year: number;
+    total_rsd_hours: number;
+    session_count: number;
+  };
+};
+
+export async function getAdminPrsQcpReport(accessToken: string) {
+  return request<AdminPrsQcpReport>(accessToken, "/admin/reports/prs_qcp");
 }
 
 export async function createAdminScoringConfig(

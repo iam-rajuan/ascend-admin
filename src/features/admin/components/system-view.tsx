@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
+import { useAuthStore } from "@/store/auth-store";
 import {
   useAdminStore,
   ServiceStatus,
@@ -59,6 +60,7 @@ export function SystemView({
 }) {
   const router = useRouter();
   const adminStore = useAdminStore();
+  const accessToken = useAuthStore((state) => state.accessToken);
   const systemOverview = adminStore.systemOverview;
   const systemDiagnostics = adminStore.systemDiagnostics;
   const questionRegistry = adminStore.questionRegistry;
@@ -75,8 +77,34 @@ export function SystemView({
   const roleProtectionCount = adminStore.roleCatalogRaw.filter(
     (role) => role.cluster === "Officer" || role.cluster === "System",
   ).length;
+  const accountsSummary = adminStore.accountsSummary;
+  const leadershipScopeRow = adminStore.scopeMatrix.find((row) => row.role === "Leadership");
+  const aggregateOnlyRoles = adminStore.scopeMatrix.filter((row) => row.aggregate_wing !== "none");
+  const scopedOnlyRoleCount = adminStore.scopeMatrix.length - aggregateOnlyRoles.length;
   const questionVersionCount = adminStore.questionBankVersions.length;
   const questionTotal = questionRegistry?.total_questions ?? systemOverview?.question_bank?.total_questions ?? 0;
+  const activeQuestionBankVersion = adminStore.questionBankVersions.find((v) => !v.retired_date) ?? null;
+  const thresholdRuleCount = thresholdRules ? Object.keys(thresholdRules).length : 0;
+  const trainingCompliance = adminStore.trainingComplianceSummary;
+  const prsQcpReport = adminStore.prsQcpReport;
+  // The mock's "Corrective Action" and "Weekly coverage" tiles have no
+  // backend equivalent - reports_service.get_prs_qcp_report's own
+  // docstring says corrective actions/issue categories are "not tracked
+  // anywhere in this backend" - dropped rather than fabricated.
+  const scsRows = (prsQcpReport?.providers ?? []).filter((p) => p.role === "SCS");
+  const ptimRows = (prsQcpReport?.providers ?? []).filter((p) => p.role === "PT/IM");
+  const sumHours = (rows: typeof scsRows) => rows.reduce((sum, r) => sum + r.logged_hours, 0);
+  const scsLoggedHours = sumHours(scsRows);
+  const scsTargetHours = scsRows[0]?.target_hours ?? 2080;
+  const scsProviderCount = scsRows.length;
+  const scsMeeting95pct = scsRows.filter((r) => r.meets_95pct_evidence).length;
+  const ptimLoggedHours = sumHours(ptimRows);
+  const ptimTargetHours = ptimRows[0]?.target_hours ?? 512;
+  const ptimProviderCount = ptimRows.length;
+  const ptimMeeting95pct = ptimRows.filter((r) => r.meets_95pct_evidence).length;
+  const totalMeeting95pct = scsMeeting95pct + ptimMeeting95pct;
+  const totalProviderCount = scsProviderCount + ptimProviderCount;
+  const overallCoveragePct = totalProviderCount ? (totalMeeting95pct / totalProviderCount) * 100 : 0;
   const totalUtilizationEvents = adminStore.utilizationEvents.length;
   const usedUtilizationEvents = adminStore.utilizationEvents.filter((event) => event.actual_use).length;
   const averageAttendance = totalUtilizationEvents
@@ -247,7 +275,16 @@ export function SystemView({
             Audit trail
           </button>
           <button
-            onClick={() => triggerToast("Initializing diagnostic sweep...")}
+            onClick={async () => {
+              if (!accessToken) return;
+              triggerToast("Running diagnostic sweep...");
+              const result = await adminStore.refreshDiagnostics(accessToken);
+              triggerToast(
+                result.ok
+                  ? "Diagnostics refreshed - services/threshold data above is current."
+                  : result.error ?? "Diagnostic sweep failed.",
+              );
+            }}
             className="px-4 py-2 bg-[var(--brand-color)] hover:bg-[var(--brand-color)/95] text-white rounded-xl text-xs font-semibold shadow-sm flex items-center gap-1.5 cursor-pointer"
           >
             <span className="size-1.5 rounded-full bg-emerald-500" />
@@ -280,6 +317,35 @@ export function SystemView({
           <span className="text-2xl font-black text-slate-800 dark:text-white">{systemOverview?.pending_transmission_count ?? 0}</span>
           <span className="text-[10px] text-slate-400 font-semibold block">live backend transmission queue</span>
         </div>
+        <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Questions bank - active</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white tabular-nums">{questionTotal}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">
+            {activeQuestionBankVersion ? `${activeQuestionBankVersion.version_id} - ${formatCompactDate(activeQuestionBankVersion.effective_date)}` : "no version recorded"}
+          </span>
+        </div>
+        <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
+          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Threshold limits</span>
+          <span className="text-2xl font-black text-slate-800 dark:text-white tabular-nums">{thresholdRuleCount}</span>
+          <span className="text-[10px] text-slate-400 font-semibold block">{thresholdRuleCount} live-configured parameters</span>
+        </div>
+        {trainingCompliance && (
+          <div className="p-5 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm space-y-1">
+            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">
+              Compliance - {trainingCompliance.window_days}d
+            </span>
+            <span
+              className={`text-2xl font-black block ${
+                trainingCompliance.status === "pass" ? "text-[var(--brand-color)]" : "text-amber-500"
+              }`}
+            >
+              {trainingCompliance.status === "pass" ? "PASS" : `${trainingCompliance.overdue_count + trainingCompliance.open_count} open`}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold block">
+              AT Level I / OPSEC - {trainingCompliance.compliant_count} of {trainingCompliance.total_required_items} items compliant
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 4. Services Status & Threshold limits grid */}
@@ -431,6 +497,169 @@ export function SystemView({
           </table>
         </div>
       </div>
+
+      {/* 6. Permissions Panel */}
+      {accountsSummary && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Permissions panel</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Provider workload · expired access · Purpose consent · protected roles · aggregate-only scope
+              </p>
+            </div>
+            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase">
+              Live
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-xs leading-normal">
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Assigned</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.provider_workload.assigned_count} active
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                Providers serving at least one operator, of {accountsSummary.provider_workload.total_provider_count} total.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Unassigned</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.provider_workload.unassigned_count}
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Provider-role accounts currently serving nobody.</p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Expired</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.access_expiration.expired_count}
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Accounts past access expiration.</p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Purpose consent</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {accountsSummary.purpose_consent.active_count} active · {accountsSummary.purpose_consent.withdrawn_count} withdrawn
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                Chaplain / Purpose pathway only - the one opt-in, revocable consent this backend tracks.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Admin &amp; protected roles</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">{roleProtectionCount}</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Officer/System-tier roles - changes require 2nd-reviewer sign-off.</p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Aggregate only</span>
+              <p className="font-bold text-slate-800 dark:text-white">
+                {leadershipScopeRow ? `Leadership · ${leadershipScopeRow.aggregate_wing}` : "—"}
+              </p>
+              <p className="text-[10px] text-slate-500 leading-normal">Cohort minimum enforced - no individual-level scores.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Hours Tracking - Contract Targets */}
+      {prsQcpReport && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Hours tracking - contract targets</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                SCS &ge; {scsTargetHours.toLocaleString()}h/yr · PT/IM &ge; {ptimTargetHours.toLocaleString()}h/yr · 95% coverage evidence · RSD tracked separately
+              </p>
+            </div>
+            <span
+              className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${
+                overallCoveragePct >= 95 ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"
+              }`}
+            >
+              {overallCoveragePct.toFixed(0)}% coverage
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-xs leading-normal">
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">SCS YTD</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {scsLoggedHours.toLocaleString()} / {scsTargetHours.toLocaleString()}
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {scsProviderCount} providers - {scsMeeting95pct} meeting 95% evidence.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">PT/IM YTD</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {ptimLoggedHours.toLocaleString()} / {ptimTargetHours.toLocaleString()}
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {ptimProviderCount} providers - {ptimMeeting95pct} meeting 95% evidence.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">RSD coverage (caseload)</span>
+              <p className="font-bold text-slate-800 dark:text-white tabular-nums">
+                {prsQcpReport.rsd_coverage.total_rsd_hours.toLocaleString()}h
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {prsQcpReport.rsd_coverage.session_count} sessions - {prsQcpReport.year}, tracked separately from regular hours.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Privacy & Cohort Suppression */}
+      {adminStore.scopeMatrix.length > 0 && (
+        <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-white">Privacy &amp; cohort suppression</h3>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Which roles get an aggregate view at all, and at what real cohort minimum - not just Leadership's.
+              </p>
+            </div>
+            <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase">
+              Enforced per role
+            </span>
+          </div>
+
+          <div className="overflow-x-auto text-xs">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-slate-400 border-b border-slate-100 dark:border-white/5 uppercase text-[9px]">
+                  <th className="pb-2 font-bold">Role</th>
+                  <th className="pb-2 font-bold">Aggregate access</th>
+                  <th className="pb-2 font-bold">Cohort minimum</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                {aggregateOnlyRoles.map((row) => (
+                  <tr key={row.role}>
+                    <td className="py-2.5 font-bold text-slate-800 dark:text-white">{row.role}</td>
+                    <td className="py-2.5 text-emerald-500 font-semibold">Aggregate only - no individual scores</td>
+                    <td className="py-2.5 font-mono text-slate-600 dark:text-slate-300">{row.aggregate_wing}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 dark:border-white/5 space-y-1">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Cell suppression</span>
+            <p className="text-[10px] text-slate-500 leading-normal max-w-3xl">
+              Every aggregate above genuinely withholds a cell below its cohort minimum - never approximated or
+              merged into a neighboring group - across the injury-by-flight, injury-type, mental-driver, and
+              meal-consistency reports. The remaining {scopedOnlyRoleCount} roles have no aggregate view at all:
+              caseload or self-scoped access only.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Operational Queues Panel */}
       <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-6 shadow-sm space-y-4">

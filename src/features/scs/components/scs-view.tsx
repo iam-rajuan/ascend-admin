@@ -2,7 +2,28 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { assignRecommendation, sendRecommendationForSignoff, upsertReconditioningPlan } from "@/lib/role-dashboards-api";
+import {
+  assignRecommendation,
+  sendRecommendationForSignoff,
+  upsertReconditioningPlan,
+  getMessageThreads,
+  getMessageThread,
+  sendMessage,
+  getLeaveOverlap,
+  type LeaveOverlapResponse,
+  getTodayPtSessions,
+  type TodayPtSessionsResponse,
+  getCoverageLoadByFlight,
+  type CoverageLoadByFlightResponse,
+  getScsDashboard,
+  type ScsDashboardData,
+  getScsWeeklyAvailability,
+  type ScsWeeklyAvailabilityResponse,
+  getScheduleVsWorked,
+  type ScheduleVsWorkedResponse,
+  getRsdSummary,
+  type RsdSummaryResponse,
+} from "@/lib/role-dashboards-api";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import { useAuthStore } from "@/store/auth-store";
 import { AscendLogo } from "@/components/ascend-logo";
@@ -12,6 +33,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { IconButton } from "@/components/ui/icon-button";
 import { RecordDetailDialog } from "@/components/ui/record-detail-dialog";
 import { CreateRecordModal } from "@/components/ui/create-record-modal";
+import { MockItemBadge } from "@/components/ui/mock-item-badge";
 import {
   POPULATION_LEVELS,
   PRIVACY_STATES,
@@ -57,6 +79,39 @@ interface MessageRow {
   sender: "scs" | "airman";
   text: string;
   time: string;
+}
+
+// Real /messaging/threads preview shape (messaging_service.list_threads).
+type ThreadPreview = {
+  thread_key: string;
+  other_user_id: string;
+  other_user_name: string | null;
+  other_user_role: string;
+  last_message_body: string;
+  last_message_at: string;
+  unread_count: number;
+};
+
+// Real /messaging/thread/{other_user_id} message shape (messaging_service._serialize).
+type RealMessage = {
+  id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+};
+
+function formatRelativeShort(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 type WorkoutRecord = {
@@ -185,14 +240,6 @@ function SectionMismatchNote({ note }: { note: string }) {
   );
 }
 
-function MockItemBadge({ label = "Mock data" }: { label?: string }) {
-  return (
-    <span className="rounded-full border border-rose-300 bg-rose-100 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-200">
-      {label}
-    </span>
-  );
-}
-
 export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   const router = useRouter();
   const { isAuthenticated, logout, accessToken } = useAuthStore();
@@ -274,31 +321,113 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   type DmThread = { initials: string; name: string; time: string; txt: string; unread: boolean; active: boolean };
   const [dmThreads, setDmThreads] = useState<DmThread[]>([]);
 
-  // Chat/Messages states
-  const [selectedChatId, setSelectedChatId] = useState<string>("J. Reyes");
+  // Chat/Messages states - real, backed by GET /messaging/threads,
+  // GET /messaging/thread/{other_user_id}, POST /messaging/send.
+  const [threads, setThreads] = useState<ThreadPreview[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(true);
+  const [threadSearch, setThreadSearch] = useState("");
+  const [selectedChatId, setSelectedChatId] = useState<string>("");
+  const [activeThreadMessages, setActiveThreadMessages] = useState<RealMessage[]>([]);
+  const [activeThreadLoading, setActiveThreadLoading] = useState(false);
   const [typedMessage, setTypedMessage] = useState("");
-  
-  // Custom mock chat threads matching Figma data
-  const [chatThreads, setChatThreads] = useState<Record<string, MessageRow[]>>({
-    "J. Reyes": [
-      { sender: "scs", text: "Take today lighter. Start the 12-min reset before duty, and keep deadlifts sub-80% this week.", time: "06:35" },
-      { sender: "airman", text: "Got it. Started the mobility reset \u2014 felt pretty good today.", time: "06:42" },
-      { sender: "airman", text: "Ready for mobility. Are we good to move into block 2 on Monday?", time: "06:14" },
-      { sender: "airman", text: "Also \u2014 slept 7.5h last night, anchored at 22:30. The dim-evening routine is helping.", time: "06:18" }
-    ],
-    "A. Mendez": [
-      { sender: "airman", text: "Sleep timing past 3 nights has been inconsistent due to night shifts. Can we adjust my loading block?", time: "Yesterday" },
-      { sender: "scs", text: "Understood. Keep intensity around RPE 6-7. Focus on hydration and the dim-light sleep routine.", time: "Yesterday" }
-    ],
-    "T. Cho": [
-      { sender: "airman", text: "OFT cleared \u2014 thanks TSgt Lee! Deadlift felt stable throughout.", time: "Yesterday" },
-      { sender: "scs", text: "Excellent news, Cho. Transitioning you back to Cycle 4 performance. Keep up the pre-hab.", time: "Yesterday" }
-    ],
-    "D. Okafor": [
-      { sender: "airman", text: "Hip \u2014 still tight after rehab sessions. Felt a pinch during squats.", time: "23 Jul" },
-      { sender: "scs", text: "Okay, hold squats for now. We will swap them with hip-hinge glute bridges on block 1.", time: "23 Jul" }
-    ]
-  });
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const selectedThread = threads.find((t) => t.other_user_id === selectedChatId);
+
+  // Leave overlap (Coverage tab) - real, GET /admin/leave/overlap?days=30.
+  const [leaveOverlap, setLeaveOverlap] = useState<LeaveOverlapResponse | null>(null);
+  const [leaveOverlapLoading, setLeaveOverlapLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setLeaveOverlapLoading(true);
+    getLeaveOverlap(accessToken, 30)
+      .then(setLeaveOverlap)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setLeaveOverlapLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // Agenda Timeline (Overview tab) - real, GET /admin/pt-sessions/today.
+  const [todaySessions, setTodaySessions] = useState<TodayPtSessionsResponse | null>(null);
+  const [todaySessionsLoading, setTodaySessionsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setTodaySessionsLoading(true);
+    getTodayPtSessions(accessToken)
+      .then(setTodaySessions)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setTodaySessionsLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // Workload by flight (Plans tab) - real, GET /admin/coverage/reconditioning-load-by-flight.
+  const [flightLoad, setFlightLoad] = useState<CoverageLoadByFlightResponse | null>(null);
+  const [flightLoadLoading, setFlightLoadLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setFlightLoadLoading(true);
+    getCoverageLoadByFlight(accessToken)
+      .then(setFlightLoad)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setFlightLoadLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // SCS dashboard operators - real, GET /dashboard/scs. Shared source for
+  // the Overview "Work Queue" and (later) Dashboard/People tab sections -
+  // real per-operator flags, not a fabricated aggregate queue.
+  const [scsDashboard, setScsDashboard] = useState<ScsDashboardData | null>(null);
+  const [scsDashboardLoading, setScsDashboardLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setScsDashboardLoading(true);
+    getScsDashboard(accessToken)
+      .then(setScsDashboard)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setScsDashboardLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // SCS Availability Matrix (Coverage tab) - real, GET /admin/coverage/scs-weekly-availability.
+  const [weeklyAvailability, setWeeklyAvailability] = useState<ScsWeeklyAvailabilityResponse | null>(null);
+  const [weeklyAvailabilityLoading, setWeeklyAvailabilityLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setWeeklyAvailabilityLoading(true);
+    getScsWeeklyAvailability(accessToken)
+      .then(setWeeklyAvailability)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setWeeklyAvailabilityLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  // SCS hours coverage + RSD coverage (Coverage tab) - real,
+  // GET /admin/coverage/schedule-vs-worked and GET /admin/coverage/rsd-summary.
+  const currentYear = new Date().getFullYear();
+  const [scheduleVsWorked, setScheduleVsWorked] = useState<ScheduleVsWorkedResponse | null>(null);
+  const [scheduleVsWorkedLoading, setScheduleVsWorkedLoading] = useState(true);
+  const [rsdSummary, setRsdSummary] = useState<RsdSummaryResponse | null>(null);
+  const [rsdSummaryLoading, setRsdSummaryLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    setScheduleVsWorkedLoading(true);
+    getScheduleVsWorked(accessToken, "SCS", currentYear)
+      .then(setScheduleVsWorked)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setScheduleVsWorkedLoading(false));
+
+    setRsdSummaryLoading(true);
+    getRsdSummary(accessToken, currentYear)
+      .then(setRsdSummary)
+      .catch((err) => triggerToast(getApiErrorMessage(err)))
+      .finally(() => setRsdSummaryLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
 
   // Assign plan forms
   const [assignAirman, setAssignAirman] = useState("J. Reyes");
@@ -314,18 +443,62 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   const [assignmentsFilter, setAssignmentsFilter] = useState<string>(PLAN_STATUSES.ACTIVE);
   const [coverageWeek, setCoverageWeek] = useState("This week");
 
-  const handleSendMessage = () => {
-    if (!typedMessage.trim()) return;
-    const currentThread = chatThreads[selectedChatId] || [];
-    setChatThreads({
-      ...chatThreads,
-      [selectedChatId]: [
-        ...currentThread,
-        { sender: "scs", text: typedMessage, time: "Just now" }
-      ]
-    });
-    setTypedMessage("");
-    triggerToast("Message sent and audit-logged");
+  const refreshThreads = async () => {
+    if (!accessToken) return;
+    setThreadsLoading(true);
+    try {
+      const data = await getMessageThreads(accessToken);
+      const list = (data.threads as unknown as ThreadPreview[]) || [];
+      setThreads(list);
+      if (!selectedChatId && list.length > 0) {
+        setSelectedChatId(list[0].other_user_id);
+      }
+    } catch (err) {
+      triggerToast(getApiErrorMessage(err));
+    } finally {
+      setThreadsLoading(false);
+    }
+  };
+
+  const openThread = async (otherUserId: string) => {
+    if (!accessToken || !otherUserId) return;
+    setSelectedChatId(otherUserId);
+    setActiveThreadLoading(true);
+    try {
+      const data = await getMessageThread(accessToken, otherUserId);
+      setActiveThreadMessages((data.messages as unknown as RealMessage[]) || []);
+    } catch (err) {
+      triggerToast(getApiErrorMessage(err));
+    } finally {
+      setActiveThreadLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (activeTab === "messages" && selectedChatId) {
+      void openThread(selectedChatId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedChatId]);
+
+  const handleSendMessage = async () => {
+    if (!typedMessage.trim() || !selectedChatId || !accessToken || sendingMessage) return;
+    setSendingMessage(true);
+    try {
+      await sendMessage(accessToken, { recipient_id: selectedChatId, body: typedMessage });
+      setTypedMessage("");
+      triggerToast("Message sent and audit-logged");
+      await Promise.all([openThread(selectedChatId), refreshThreads()]);
+    } catch (err) {
+      triggerToast(getApiErrorMessage(err));
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   const focusPlanForm = () => {
@@ -1259,73 +1432,127 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* ACTIONABLE WORK QUEUE — priority items first, clickable, opens filtered records (Req 3) */}
+              {/* ACTIONABLE WORK QUEUE - real, GET /dashboard/scs.
+                  "New Assignment" and "Follow-up Due" from the old mock had
+                  no real backing signal (no assignment-created-date or
+                  follow-up-due tracking exists) and are dropped rather than
+                  approximated; the remaining 3 cards use real per-operator
+                  flags already computed by the backend, plus real unread
+                  message counts (already wired above). */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Work Queue &middot; requires your action</h3>
-                    <MockItemBadge />
                   </div>
                   <span className="text-[9px] text-slate-500 font-mono">{POPULATION_LEVELS.CASELOAD}</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                  {[
-                    { name: ALERT_TYPES.NEW_ASSIGNMENT, count: "4", desc: "New to your caseload this week", tab: "people" as TabType, col: "teal" },
-                    { name: ALERT_TYPES.FOLLOW_UP_DUE, count: "6", desc: "Follow-up check due within 48h", tab: "people" as TabType, col: "orange" },
-                    { name: ALERT_TYPES.OVERDUE_ACTION, count: "3", desc: "Past due &mdash; review before 11:00", tab: "people" as TabType, col: "red" },
-                    { name: ALERT_TYPES.UNREAD_MESSAGE, count: "7", desc: "Unread in Messages", tab: "messages" as TabType, col: "teal" },
-                    { name: ALERT_TYPES.PLAN_REVIEW, count: "2", desc: "Awaiting PT/IM sign-off", tab: "plans" as TabType, col: "orange" }
-                  ].map((card, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setActiveTab(card.tab); triggerToast(`Opening ${card.name.toLowerCase()} queue`); }}
-                      className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 hover:border-rose-400 dark:hover:border-rose-400/60 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
-                    >
-                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <div className="flex items-baseline gap-2">
-                        <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                        <span className={`text-[10px] font-bold ${
-                          card.col === "red" ? "text-rose-500" :
-                          card.col === "orange" ? "text-amber-500" : "text-[var(--brand-color)]"
-                        }`}>
-                          &rarr; open
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                    </button>
-                  ))}
-                </div>
+                {scsDashboardLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading work queue&hellip;</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {[
+                      {
+                        name: "Low OPS",
+                        count: String(scsDashboard?.low_ops_count ?? 0),
+                        desc: "Below 55 OPS score",
+                        tab: "people" as TabType,
+                        col: "red",
+                      },
+                      {
+                        name: ALERT_TYPES.OVERDUE_ACTION,
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                        desc: "Active risk flag on caseload",
+                        tab: "people" as TabType,
+                        col: "red",
+                      },
+                      {
+                        name: ALERT_TYPES.UNREAD_MESSAGE,
+                        count: String(threads.reduce((sum, t) => sum + t.unread_count, 0)),
+                        desc: "Unread in Messages",
+                        tab: "messages" as TabType,
+                        col: "teal",
+                      },
+                      {
+                        name: ALERT_TYPES.PLAN_REVIEW,
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.ptim_referral_status === "pending").length),
+                        desc: "Awaiting PT/IM referral",
+                        tab: "plans" as TabType,
+                        col: "orange",
+                      },
+                    ].map((card, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { setActiveTab(card.tab); triggerToast(`Opening ${card.name.toLowerCase()} queue`); }}
+                        className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 hover:border-slate-300 dark:hover:border-white/20 rounded-2xl p-5 shadow-sm space-y-3 text-left transition cursor-pointer"
+                      >
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                        <div className="flex items-baseline gap-2">
+                          <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
+                          <span className={`text-[10px] font-bold ${
+                            card.col === "red" ? "text-rose-500" :
+                            card.col === "orange" ? "text-amber-500" : "text-[var(--brand-color)]"
+                          }`}>
+                            &rarr; open
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-
-              {/* Flight snapshot — analytics, secondary to the work queue above */}
+              {/* Flight snapshot - real, from GET /dashboard/scs (already
+                  fetched above). "+N this month"/"+N since Mon" trend
+                  deltas from the old mock had no real historical snapshot
+                  to diff against and are dropped rather than fabricated. */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot &middot; analytics</span>
-                  <MockItemBadge label="Partial mock" />
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 tracking-widest uppercase font-mono block">Flight snapshot · caseload</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                  {[
-                    { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
-                    { name: "Needs review", count: "14", desc: "+3 since Mon", col: "orange" },
-                    { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
-                    { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
-                  ].map((card, i) => (
-                    <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
-                      <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <div className="flex items-baseline gap-2">
-                        <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                        <span className={`text-[10px] font-bold ${
-                          card.col === "green" ? "text-emerald-500" :
-                          card.col === "orange" ? "text-amber-500" :
-                          card.col === "teal" ? "text-[var(--brand-color)]" : "text-slate-500"
-                        }`}>
-                          {card.desc.split(" since ")[0].split(" this ")[0].split(" cleared ")[0].split(" awaiting ")[0]}
-                        </span>
+                {scsDashboardLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading snapshot…</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                    {[
+                      {
+                        name: "Active airmen",
+                        count: String(scsDashboard?.assigned_count ?? 0),
+                        desc: "Assigned to SCS",
+                        col: "green",
+                      },
+                      {
+                        name: "Needs review",
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                        desc: "Active risk flag",
+                        col: "orange",
+                      },
+                      {
+                        name: "OFT clearance queue",
+                        count: String(
+                          (scsDashboard?.operators ?? []).filter((o) =>
+                            ["scheduled", "no_record", "not_current"].includes(o.oft_status)
+                          ).length
+                        ),
+                        desc: `${scsDashboard?.oft_cleared_today_count ?? 0} cleared today`,
+                        col: "teal",
+                      },
+                      {
+                        name: "Reconditioning",
+                        count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                        desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                        col: "slate",
+                      },
+                    ].map((card, i) => (
+                      <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
+                        <div className="flex items-baseline gap-2">
+                          <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                       </div>
-                      <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Surfaces section header */}
@@ -1374,48 +1601,41 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Timeline and k>=5 Notes split layout */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 
-                {/* Timeline agenda */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                {/* Timeline agenda - real, GET /admin/pt-sessions/today.
+                    Only PT sessions are a real, tracked event type here;
+                    "OFT clearance run"/"Rehab review"/"Plan sync" from the
+                    old mock had no real backing source and are dropped
+                    rather than approximated. */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                    <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono">Today &middot; 28 Jul</span>
+                    <span className="text-[9px] font-bold text-slate-400 block uppercase font-mono">
+                      Today · {todaySessions?.date ?? ""}
+                    </span>
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white">Agenda Timeline</h3>
                     </div>
-                    <MockItemBadge />
                   </div>
 
-                  <div className="relative border-l border-slate-100 dark:border-white/5 pl-6 ml-2 space-y-6 text-xs font-sans">
-                    
-                    {/* Item 1 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">06:42</span>
-                      <span className="font-bold text-slate-800 dark:text-white block mt-0.5">OFT clearance run</span>
-                      <span className="text-[10px] text-emerald-500 block leading-tight font-mono">3 cleared</span>
+                  {todaySessionsLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading today’s sessions…</p>
+                  ) : !todaySessions || todaySessions.sessions.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">No PT sessions scheduled today.</p>
+                  ) : (
+                    <div className="relative border-l border-slate-100 dark:border-white/5 pl-6 ml-2 space-y-6 text-xs font-sans">
+                      {todaySessions.sessions.map((s) => (
+                        <div key={s.id} className="relative">
+                          <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
+                          <span className="font-mono text-slate-400 text-[10px] block">{s.start_time}</span>
+                          <span className="font-bold text-slate-800 dark:text-white block mt-0.5">
+                            {s.group_label} · {s.focus_label}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block leading-tight font-mono">
+                            {s.enrolled_count}/{s.capacity} enrolled ({s.capacity_pct}%) · {s.lead_provider_name}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-
-                    {/* Item 2 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-[var(--brand-color)] border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">07:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">PT session &middot; Alpha flight</span>
-                    </div>
-
-                    {/* Item 3 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-slate-300 dark:bg-slate-700 border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">11:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">Rehab review &middot; J. Reyes</span>
-                    </div>
-
-                    {/* Item 4 */}
-                    <div className="relative">
-                      <span className="absolute -left-[30px] top-1 size-3 rounded-full bg-slate-300 dark:bg-slate-700 border-2 border-white dark:border-[#0e1628]"></span>
-                      <span className="font-mono text-slate-400 text-[10px] block">14:00</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block mt-0.5">Plan sync with PT/IM</span>
-                    </div>
-
-                  </div>
+                  )}
                 </div>
 
                 {/* k>=5 Guidelines notes */}
@@ -1478,28 +1698,45 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* 4 Cards Grid */}
+              {/* 4 Cards Grid - real, same GET /dashboard/scs data as Overview's
+                  Flight snapshot. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {[
-                  { name: "Active airmen", count: "112", desc: "+4 this month", col: "green" },
-                  { name: "Needs review", count: "14", desc: "+3 since Mon", col: "orange" },
-                  { name: "OFT clearance queue", count: "7", desc: "3 cleared today", col: "teal" },
-                  { name: "Reconditioning", count: "5", desc: "2 awaiting review", col: "slate" }
+                  {
+                    name: "Active airmen",
+                    count: String(scsDashboard?.assigned_count ?? 0),
+                    desc: "Assigned to SCS",
+                    col: "green",
+                  },
+                  {
+                    name: "Needs review",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                    desc: "Active risk flag",
+                    col: "orange",
+                  },
+                  {
+                    name: "OFT clearance queue",
+                    count: String(
+                      (scsDashboard?.operators ?? []).filter((o) =>
+                        ["scheduled", "no_record", "not_current"].includes(o.oft_status)
+                      ).length
+                    ),
+                    desc: `${scsDashboard?.oft_cleared_today_count ?? 0} cleared today`,
+                    col: "teal",
+                  },
+                  {
+                    name: "Reconditioning",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                    desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                    col: "slate",
+                  },
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <MockItemBadge />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.col === "green" ? "text-emerald-500" :
-                        card.col === "orange" ? "text-amber-500" :
-                        card.col === "teal" ? "text-[var(--brand-color)]" : "text-slate-500"
-                      }`}>
-                        {card.desc.split(" since ")[0].split(" this ")[0].split(" cleared ")[0].split(" awaiting ")[0]}
-                      </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                   </div>
@@ -1523,14 +1760,18 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 {/* Left Column (8/12): Queue roster table & Driver Breakdown */}
                 <div className="lg:col-span-8 space-y-6">
                   
-                  {/* Queue table card */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                  {/* Queue table card - real, GET /dashboard/scs operators.
+                      "Confidence" from the old mock had no real per-operator
+                      source and is dropped; OPS trend arrows are dropped too
+                      (no historical snapshot to diff against here). */}
+                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                        <MockItemBadge />
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                          Queue · {(scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length}
+                        </h3>
                       </div>
-                      <p className="text-[10px] text-slate-500 font-mono">Sorted by severity then confidence</p>
+                      <p className="text-[10px] text-slate-500 font-mono">Sorted by OPS score, lowest first</p>
 
                       <div className="flex gap-2">
                         {["Needs review", "OFT", "Reconditioning", "L4+"].map((fPill, idx) => (
@@ -1549,104 +1790,132 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       </div>
                     </div>
 
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            <th className="pb-3">Airman</th>
-                            <th className="pb-3">Driver</th>
-                            <th className="pb-3 text-right">Last Ops</th>
-                            <th className="pb-3">Confidence</th>
-                            <th className="pb-3 text-right">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                          {[
-                            { code: "J. Reyes", details: "SrA", dr: "L4 · Pain - lower back", drCol: "red", ops: "54 \u25bc 8", opsCol: "red", conf: "High", plan: "Rehab Block 2", date: "28 Jul" },
-                            { code: "A. Mendez", details: "A1C", dr: "Sleep · 5 nights", drCol: "badge-orange", ops: "62 \u25bc 3", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                            { code: "T. Cho", details: "SSgt", dr: "OFT · clearance", drCol: "badge-teal", ops: "68 \u25b2 2", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                            { code: "B. Ndiaye", details: "A1C", dr: "Mobility", drCol: "badge-teal", ops: "71 \u25b2 4", opsCol: "green", conf: "High", plan: "Reconditioning", date: "26 Jul" },
-                            { code: "K. Patel", details: "A1C", dr: "Load mgmt", drCol: "badge-orange", ops: "66 \u2014 0", opsCol: "slate", conf: "High", plan: "OFT Tempo Prep", date: "28 Jul" },
-                            { code: "M. Hayes", details: "SrA", dr: "Cycle 4", drCol: "badge-teal", ops: "74 \u25b2 1", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                            { code: "D. Okafor", details: "SSgt", dr: "L3 · hip", drCol: "orange", ops: "58 \u25bc 5", opsCol: "red", conf: "Medium", plan: "Hip Recond.", date: "25 Jul" }
-                          ].filter((row) => matchesQueuePill(dashboardQueueFilter, row) && (dashboardDateRange !== "Today" || row.date === "28 Jul")).map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/20 transition">
-                              <td className="py-2.5">
-                                <span className="font-bold text-slate-800 dark:text-white block">{row.code}</span>
-                                <span className="text-[10px] text-slate-500 block mt-0.5">{row.details}</span>
-                              </td>
-                              <td className="py-2.5">
-                                {row.drCol === "red" && <span className="font-bold text-rose-500">{row.dr}</span>}
-                                {row.drCol === "orange" && <span className="font-bold text-amber-500">{row.dr}</span>}
-                                {row.drCol.startsWith("badge-") && (
-                                  <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                    row.drCol === "badge-teal" ? "bg-cyan-500/10 text-cyan-600" : "bg-amber-500/10 text-amber-600"
-                                  }`}>
-                                    {row.dr}
-                                  </span>
-                                )}
-                              </td>
-                              <td className={`py-2.5 text-right font-mono font-bold ${
-                                row.opsCol === "red" ? "text-rose-500" :
-                                row.opsCol === "green" ? "text-emerald-500" : "text-slate-500"
-                              }`}>{row.ops}</td>
-                              <td className="py-2.5">
-                                <span className="inline-flex items-center gap-1.5 font-bold">
-                                  <span className={`size-1.5 rounded-full ${
-                                    row.conf === "High" ? "bg-emerald-500" : "bg-amber-500"
-                                  }`}></span>
-                                  {row.conf}
-                                </span>
-                              </td>
-                              <td className="py-2.5 text-right">
-                              <button
-                                  onClick={() => { setReviewingAirmanId(row.code); triggerToast(`Opened chart view context: ${row.code}`); }}
-                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                                >
-                                  Open
-                                </button>
-                              </td>
+                    {scsDashboardLoading ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">Loading queue…</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              <th className="pb-3">Airman</th>
+                              <th className="pb-3">Driver</th>
+                              <th className="pb-3 text-right">OPS</th>
+                              <th className="pb-3">Checked in</th>
+                              <th className="pb-3 text-right">Action</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                            {(scsDashboard?.operators ?? [])
+                              .filter((row) => {
+                                switch (dashboardQueueFilter) {
+                                  case "OFT":
+                                    return ["scheduled", "no_record", "not_current"].includes(row.oft_status);
+                                  case "Reconditioning":
+                                    return row.reconditioning_active;
+                                  case "L4+":
+                                    return row.driver_flag === "L4" || row.driver_flag === "L5";
+                                  case "Needs review":
+                                  default:
+                                    return !!row.active_risk_flag;
+                                }
+                              })
+                              .sort((a, b) => (a.current_ops_score ?? 999) - (b.current_ops_score ?? 999))
+                              .map((row) => (
+                                <tr key={row.user_id} className="hover:bg-slate-50/20 transition">
+                                  <td className="py-2.5">
+                                    <span className="font-bold text-slate-800 dark:text-white block">{row.user_name}</span>
+                                  </td>
+                                  <td className="py-2.5">
+                                    {row.active_risk_flag ? (
+                                      <span className="font-bold text-rose-500">
+                                        {row.driver_flag ? `${row.driver_flag} · ` : ""}{row.active_risk_flag}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400">—</span>
+                                    )}
+                                  </td>
+                                  <td className={`py-2.5 text-right font-mono font-bold ${
+                                    row.current_ops_score !== null && row.current_ops_score < 55 ? "text-rose-500" : "text-slate-500"
+                                  }`}>
+                                    {row.current_ops_score ?? "—"}
+                                  </td>
+                                  <td className="py-2.5">
+                                    <span className={`inline-flex items-center gap-1.5 font-bold ${row.checked_in_today ? "text-emerald-500" : "text-slate-400"}`}>
+                                      <span className={`size-1.5 rounded-full ${row.checked_in_today ? "bg-emerald-500" : "bg-slate-400"}`}></span>
+                                      {row.checked_in_today ? "Yes" : "No"}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 text-right">
+                                  <button
+                                      onClick={() => { setReviewingAirmanId(row.user_name); triggerToast(`Opened chart view context: ${row.user_name}`); }}
+                                      className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                                    >
+                                      Open
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
 
                     <div className="pt-3 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[10px] font-mono">
-                      <span className="text-slate-400">Showing 7 of 14 airmen</span>
+                      <span className="text-slate-400">Showing {(scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length} of {scsDashboard?.assigned_count ?? 0} airmen</span>
                       <button type="button" onClick={() => setActiveTab("people")} className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline">
                         View all &rarr;
                       </button>
                     </div>
                   </div>
 
-                  {/* Driver breakdown widget */}
-                  <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+                  {/* Driver breakdown widget - real, averaged from GET
+                      /dashboard/scs operators. Mental/Nutritional/Spiritual
+                      from the old mock are dropped - the SCS dashboard's
+                      real per-operator payload only carries
+                      physical_readiness and sleep_readiness. */}
+                  <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                     <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">Driver Breakdown</h3>
-                      <MockItemBadge />
                     </div>
-                    <p className="text-[9px] text-slate-500 font-mono">Cohort &middot; last 7 days</p>
+                    <p className="text-[9px] text-slate-500 font-mono">Cohort average, current scores</p>
 
-                    <div className="space-y-4 font-sans text-xs">
-                      {[
-                        { label: "Physical", val: 72, col: "bg-cyan-500" },
-                        { label: "Sleep", val: 59, col: "bg-cyan-500" },
-                        { label: "Mental (training implication)", val: 65, col: "bg-blue-500" },
-                        { label: "Nutritional", val: 71, col: "bg-amber-500" },
-                        { label: "Spiritual", val: 70, col: "bg-yellow-500" }
-                      ].map((bar, idx) => (
-                        <div key={idx} className="space-y-1.5">
-                          <div className="flex justify-between items-baseline font-mono text-[10px]">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{bar.label}</span>
-                            <span>{bar.val}</span>
-                          </div>
-                          <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${bar.col}`} style={{ width: `${bar.val}%` }}></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    {scsDashboardLoading ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">Loading&hellip;</p>
+                    ) : (
+                      <div className="space-y-4 font-sans text-xs">
+                        {[
+                          {
+                            label: "Physical",
+                            scores: (scsDashboard?.operators ?? [])
+                              .map((o) => o.physical_readiness)
+                              .filter((v): v is number => v !== null),
+                            col: "bg-cyan-500",
+                          },
+                          {
+                            label: "Sleep",
+                            scores: (scsDashboard?.operators ?? [])
+                              .map((o) => o.sleep_readiness)
+                              .filter((v): v is number => v !== null),
+                            col: "bg-cyan-500",
+                          },
+                        ].map((bar, idx) => {
+                          const val = bar.scores.length
+                            ? Math.round(bar.scores.reduce((sum, v) => sum + v, 0) / bar.scores.length)
+                            : null;
+                          return (
+                            <div key={idx} className="space-y-1.5">
+                              <div className="flex justify-between items-baseline font-mono text-[10px]">
+                                <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{bar.label}</span>
+                                <span>{val ?? "—"}</span>
+                              </div>
+                              <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${bar.col}`} style={{ width: `${val ?? 0}%` }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                 </div>
@@ -1842,47 +2111,62 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Hours coverage and RTP splits */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
                 
-                {/* Hours coverage stats */}
+                {/* Hours coverage stats - real, same GET
+                    /admin/coverage/schedule-vs-worked + GET
+                    /admin/coverage/rsd-summary data already fetched for
+                    the Coverage tab (this is the same org-wide SCS
+                    coverage stat, not per-airman - Dashboard tab
+                    duplicates the Coverage tab's card). */}
                 <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
                     <div>
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <p className="text-[9px] text-slate-500 font-mono">Scheduled + worked &middot; progress toward 2,080 annual</p>
+                      <p className="text-[9px] text-slate-500 font-mono">Scheduled + worked · progress toward 2,080 annual</p>
                     </div>
                     <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
                       95% target
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-left">
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">160</span>
-                      <span className="text-[9px] text-slate-500 block">Cap 200</span>
+                  {scheduleVsWorkedLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading…</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4 text-left">
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_scheduled_hours ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">{scheduleVsWorked?.entries_with_schedule ?? 0} logged entries</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_worked_hours ?? 0}</span>
+                        <span className="text-[9px] text-emerald-500 block">
+                          {scheduleVsWorked?.worked_pct_of_scheduled !== null && scheduleVsWorked?.worked_pct_of_scheduled !== undefined
+                            ? `${scheduleVsWorked.worked_pct_of_scheduled}% of scheduled`
+                            : "No schedule logged yet"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block font-mono">{scheduleVsWorked?.total_worked_hours ?? 0} / 2,080</span>
+                        <span className="text-[9px] text-slate-500 block">DOCX annual target</span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
+                        <span className="font-bold text-rose-500 block">{scheduleVsWorked?.missed_count ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">vs scheduled hours</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">152</span>
-                      <span className="text-[9px] text-emerald-500 block">95% of scheduled</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block font-mono">1,128 / 2,080</span>
-                      <span className="text-[9px] text-slate-500 block">54% on pace</span>
-                    </div>
-                    <div>
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
-                      <span className="font-bold text-rose-500 block">8</span>
-                      <span className="text-[9px] text-slate-500 block">2 due to leave</span>
-                    </div>
-                  </div>
+                  )}
 
                   <div className="pt-2 border-t border-slate-100 dark:border-white/5 flex justify-between items-center text-[9px] font-mono">
                     <span className="text-slate-500">RSD coverage (separate)</span>
-                    <span className="font-bold text-amber-500 font-sans">36 / 20</span>
+                    <span className="font-bold text-amber-500 font-sans">
+                      {rsdSummaryLoading ? "…" : `${rsdSummary?.total_rsd_hours ?? 0}h / ${rsdSummary?.session_count ?? 0} sessions`}
+                    </span>
                   </div>
                   <p className="text-[9px] text-slate-500 leading-relaxed font-sans mt-1">
-                    Restricted-status duty sessions &mdash; tracked separate from regular SCS hours.
+                    Restricted-status duty sessions — tracked separate from regular SCS hours.
                   </p>
                 </div>
 
@@ -2031,46 +2315,64 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* 4 Cards Grid */}
+              {/* 4 Cards Grid - real, same GET /dashboard/scs data. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {[
-                  { name: "Active airmen", count: "112", desc: "+4 this month", icon: "green" },
-                  { name: "Needs review", count: "14", desc: "+3 since Mon", icon: "orange" },
-                  { name: "L4+ flagged", count: "3", desc: "Review before 11:00", icon: "red" },
-                  { name: "Reconditioning", count: "5", desc: "2 awaiting review", icon: "slate" }
+                  {
+                    name: "Active airmen",
+                    count: String(scsDashboard?.assigned_count ?? 0),
+                    desc: "Assigned to SCS",
+                    icon: "green",
+                  },
+                  {
+                    name: "Needs review",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length),
+                    desc: "Active risk flag",
+                    icon: "orange",
+                  },
+                  {
+                    name: "L4+ flagged",
+                    count: String(
+                      (scsDashboard?.operators ?? []).filter((o) => o.driver_flag === "L4" || o.driver_flag === "L5").length
+                    ),
+                    desc: "Highest escalation level",
+                    icon: "red",
+                  },
+                  {
+                    name: "Reconditioning",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                    desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                    icon: "slate",
+                  },
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <MockItemBadge />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.icon === "green" ? "text-emerald-500" :
-                        card.icon === "orange" ? "text-amber-500" :
-                        card.icon === "red" ? "text-rose-500" : "text-[var(--brand-color)]"
-                      }`}>
-                        {card.desc.split(" since ")[0].split(" this ")[0].split(" before ")[0].split(" awaiting ")[0]}
-                      </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                   </div>
                 ))}
               </div>
 
-              {/* People Table */}
-              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
-                
+              {/* People Table - real, GET /dashboard/scs operators.
+                  "Confidence", "Plan", and "Last Contact" from the old mock
+                  have no real per-operator source in this payload and are
+                  dropped rather than fabricated. */}
+              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
+
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-3">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Queue &middot; 14</h3>
-                    <MockItemBadge />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Roster · {scsDashboard?.assigned_count ?? 0}
+                    </h3>
                   </div>
-                  <p className="text-[10px] text-slate-500">Sorted by severity then confidence</p>
+                  <p className="text-[10px] text-slate-500">Sorted by OPS score, lowest first</p>
 
                   <div className="flex gap-2">
-                    {["Needs review", "OFT", "Reconditioning", "L4+", "All 112"].map((fPill, idx) => (
+                    {["Needs review", "OFT", "Reconditioning", "L4+", "All"].map((fPill, idx) => (
                       <button
                         key={idx}
                         onClick={() => { setPeopleQueueFilter(fPill); triggerToast(`Filtering roster by: ${fPill}`); }}
@@ -2086,96 +2388,90 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">Airman</th>
-                        <th className="pb-3">Driver</th>
-                        <th className="pb-3 text-right">Last Ops</th>
-                        <th className="pb-3">Confidence</th>
-                        <th className="pb-3">Plan</th>
-                        <th className="pb-3">Last Contact</th>
-                        <th className="pb-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { code: "J. Reyes", details: "SrA · Alpha", dr: "L4 · Pain - lower back", drCol: "red", ops: "54 \u25bc 8", opsCol: "red", conf: "High", plan: "Rehab Block 2", date: "28 Jul" },
-                        { code: "A. Mendez", details: "A1C · Bravo", dr: "Sleep · 5 nights", drCol: "badge-orange", ops: "62 \u25bc 3", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                        { code: "T. Cho", details: "SSgt · Alpha", dr: "OFT · clearance", drCol: "badge-teal", ops: "68 \u25b2 2", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                        { code: "B. Ndiaye", details: "A1C · Charlie", dr: "Mobility", drCol: "badge-teal", ops: "71 \u25b2 4", opsCol: "green", conf: "High", plan: "Reconditioning", date: "26 Jul" },
-                        { code: "K. Patel", details: "A1C · Bravo", dr: "Load mgmt", drCol: "badge-orange", ops: "66 \u2014 0", opsCol: "slate", conf: "High", plan: "OFT Tempo Prep", date: "28 Jul" },
-                        { code: "M. Hayes", details: "SrA · Alpha", dr: "Cycle 4", drCol: "badge-teal", ops: "74 \u25b2 1", opsCol: "green", conf: "High", plan: "Cycle 4 Perf.", date: "28 Jul" },
-                        { code: "D. Okafor", details: "SSgt · Charlie", dr: "L3 · hip", drCol: "orange", ops: "58 \u25bc 5", opsCol: "red", conf: "Medium", plan: "Hip Recond.", date: "25 Jul" },
-                        { code: "R. Singh", details: "SrA · Bravo", dr: "Profile · exempt", drCol: "badge-slate", ops: "70 \u2014 1", opsCol: "slate", conf: "Medium", plan: "Mobility Reset", date: "24 Jul" },
-                        { code: "S. Bauer", details: "A1C · Alpha", dr: "Sleep · 3 nights", drCol: "badge-orange", ops: "64 \u25bc 2", opsCol: "red", conf: "Medium", plan: "Sleep Reset", date: "27 Jul" },
-                        { code: "L. Soto", details: "SSgt · Charlie", dr: "L2 · shoulder", drCol: "orange", ops: "69 \u25b2 3", opsCol: "green", conf: "High", plan: "Upper Recond.", date: "26 Jul" }
-                      ].filter((row) => matchesQueuePill(peopleQueueFilter, row)).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-3">
-                            <span className="font-bold text-slate-800 dark:text-white block">{row.code}</span>
-                            <span className="text-[10px] text-slate-500 font-medium block mt-0.5">{row.details}</span>
-                          </td>
-                          <td className="py-3">
-                            {row.drCol === "red" && <span className="font-bold text-rose-500">{row.dr}</span>}
-                            {row.drCol === "orange" && <span className="font-bold text-amber-500">{row.dr}</span>}
-                            {row.drCol.startsWith("badge-") && (
-                              <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                row.drCol === "badge-teal" ? "bg-cyan-500/10 text-cyan-600" :
-                                row.drCol === "badge-orange" ? "bg-amber-500/10 text-amber-600" : "bg-slate-100 text-slate-500"
-                              }`}>
-                                {row.dr}
-                              </span>
-                            )}
-                          </td>
-                          <td className={`py-3 text-right font-mono font-bold ${
-                            row.opsCol === "red" ? "text-rose-500" :
-                            row.opsCol === "green" ? "text-emerald-500" : "text-slate-500"
-                          }`}>{row.ops}</td>
-                          <td className="py-3">
-                            <span className="inline-flex items-center gap-1.5 font-bold">
-                              <span className={`size-1.5 rounded-full ${
-                                row.conf === "High" ? "bg-emerald-500" : "bg-amber-500"
-                              }`}></span>
-                              {row.conf}
-                            </span>
-                          </td>
-                          <td className="py-3 text-slate-700 dark:text-slate-300">{row.plan}</td>
-                          <td className="py-3 text-slate-500 font-mono">{row.date}</td>
-                          <td className="py-3 text-right">
-                            <button
-                              onClick={() => {
-                                setReviewingAirmanId(row.code);
-                                triggerToast(`Opening roster file context for ${row.code}`);
-                              }}
-                              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                            >
-                              Open
-                            </button>
-                          </td>
+                {scsDashboardLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading roster…</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <th className="pb-3 w-1/4">Airman</th>
+                          <th className="pb-3">Driver</th>
+                          <th className="pb-3 text-right">OPS</th>
+                          <th className="pb-3">OFT status</th>
+                          <th className="pb-3">Checked in</th>
+                          <th className="pb-3 text-right">Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination */}
-                <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-white/5">
-                  <span className="text-[10px] text-slate-500 font-mono">1&mdash;10 of 14</span>
-                  <div className="flex items-center gap-1">
-                    <button aria-label="Previous page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-400 rounded hover:bg-slate-50">&lt;</button>
-                    <button aria-label="Page 1" aria-current="page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/10 text-[10px] text-[var(--brand-color)] font-bold rounded bg-[var(--brand-color)]/10">1</button>
-                    <button aria-label="Page 2" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 rounded hover:bg-slate-50">2</button>
-                    <button aria-label="Next page" type="button" className="p-1 px-2 border border-slate-200 dark:border-white/5 text-[10px] text-slate-500 rounded hover:bg-slate-50">&gt;</button>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                        {(scsDashboard?.operators ?? [])
+                          .filter((row) => {
+                            switch (peopleQueueFilter) {
+                              case "OFT":
+                                return ["scheduled", "no_record", "not_current"].includes(row.oft_status);
+                              case "Reconditioning":
+                                return row.reconditioning_active;
+                              case "L4+":
+                                return row.driver_flag === "L4" || row.driver_flag === "L5";
+                              case "All":
+                                return true;
+                              case "Needs review":
+                              default:
+                                return !!row.active_risk_flag;
+                            }
+                          })
+                          .sort((a, b) => (a.current_ops_score ?? 999) - (b.current_ops_score ?? 999))
+                          .map((row) => (
+                            <tr key={row.user_id} className="hover:bg-slate-50/20 transition">
+                              <td className="py-3">
+                                <span className="font-bold text-slate-800 dark:text-white block">{row.user_name}</span>
+                              </td>
+                              <td className="py-3">
+                                {row.active_risk_flag ? (
+                                  <span className="font-bold text-rose-500">
+                                    {row.driver_flag ? `${row.driver_flag} · ` : ""}{row.active_risk_flag}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+                              <td className={`py-3 text-right font-mono font-bold ${
+                                row.current_ops_score !== null && row.current_ops_score < 55 ? "text-rose-500" : "text-slate-500"
+                              }`}>
+                                {row.current_ops_score ?? "—"}
+                              </td>
+                              <td className="py-3 text-slate-700 dark:text-slate-300">{row.oft_status.replace("_", " ")}</td>
+                              <td className="py-3">
+                                <span className={`inline-flex items-center gap-1.5 font-bold ${row.checked_in_today ? "text-emerald-500" : "text-slate-400"}`}>
+                                  <span className={`size-1.5 rounded-full ${row.checked_in_today ? "bg-emerald-500" : "bg-slate-400"}`}></span>
+                                  {row.checked_in_today ? "Yes" : "No"}
+                                </span>
+                              </td>
+                              <td className="py-3 text-right">
+                                <button
+                                  onClick={() => {
+                                    setReviewingAirmanId(row.user_name);
+                                    triggerToast(`Opening roster file context for ${row.user_name}`);
+                                  }}
+                                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                                >
+                                  Open
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
+                )}
 
               </div>
-
               {/* Footer */}
               <div className="pt-2 flex justify-between items-center text-[10px] font-mono text-slate-400">
-                <span>14 flagged of 112 assigned &middot; k=1 drill-in is audit logged</span>
+                <span>
+                  {(scsDashboard?.operators ?? []).filter((o) => o.active_risk_flag).length} flagged of{" "}
+                  {scsDashboard?.assigned_count ?? 0} assigned &middot; k=1 drill-in is audit logged
+                </span>
                 <button type="button" className="text-[var(--brand-color)] font-bold cursor-pointer hover:underline" onClick={() => setActiveTab("coverage")}>Coverage &rarr;</button>
               </div>
 
@@ -2631,161 +2927,157 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                 </div>
               </div>
 
-              {/* 4 Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {/* Cards Grid - real. "PT sessions / wk" and "OFT lanes
+                  covered" from the old mock are dropped - no lane taxonomy
+                  or weekly PT-session capacity is tracked anywhere in the
+                  backend (same finding documented in coverage_service's
+                  get_reconditioning_load_by_flight docstring). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 {[
-                  { name: "PT sessions / wk", count: "28", desc: "Cap 32 · 88% used", icon: "green" },
-                  { name: "OFT lanes covered", count: "5/7", desc: "-2 uncovered lanes", icon: "red" },
-                  { name: "Reconditioning load", count: "5", desc: "2 awaiting review", icon: "slate" },
-                  { name: "Leave overlap", count: "1", desc: "27 Jul - 29 Jul", icon: "orange" }
+                  {
+                    name: "Reconditioning load",
+                    count: String((scsDashboard?.operators ?? []).filter((o) => o.reconditioning_active).length),
+                    desc: `${scsDashboard?.reconditioning_awaiting_review_count ?? 0} awaiting review`,
+                    icon: "slate",
+                  },
+                  {
+                    name: "Leave overlap",
+                    count: String(leaveOverlap?.records.length ?? 0),
+                    desc:
+                      (leaveOverlap?.overlapping_pairs.length ?? 0) > 0
+                        ? `${leaveOverlap!.overlapping_pairs.length} overlapping`
+                        : "No overlaps",
+                    icon: "orange",
+                  },
                 ].map((card, i) => (
-                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-3 text-left">
+                  <div key={i} className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block uppercase tracking-wider font-sans">{card.name}</span>
-                      <MockItemBadge />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <h2 className="text-3xl font-black text-slate-800 dark:text-white leading-none">{card.count}</h2>
-                      <span className={`text-[10px] font-bold ${
-                        card.icon === "green" ? "text-emerald-500" :
-                        card.icon === "teal" ? "text-[var(--brand-color)]" :
-                        card.icon === "red" ? "text-rose-500" : "text-amber-500"
-                      }`}>
-                        {card.desc.split(" · ")[0]}
-                      </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-mono">{card.desc}</p>
                   </div>
                 ))}
               </div>
 
-              {/* Workload by Flight */}
-              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              {/* Workload by Flight - real, GET /admin/coverage/reconditioning-load-by-flight.
+                  Only real reconditioning-load columns are shown; "PT/Wk",
+                  "OFT Lanes", and "Capacity" from the old mock have no real
+                  data source anywhere in the backend (see the service
+                  method's own docstring) and are not approximated. */}
+              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">Workload by flight</h3>
-                    <MockItemBadge />
                   </div>
-                  <p className="text-[10px] text-slate-500">PT sessions, OFT lanes, reconditioning count &middot; week of 27 Jul</p>
+                  <p className="text-[10px] text-slate-500">Active reconditioning caseload by flight</p>
                   <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[8px] font-bold rounded uppercase">
-                    k&ge;5
+                    k&ge;{flightLoad?.min_cohort_size ?? "—"}
                   </span>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3">Flight</th>
-                        <th className="pb-3 text-right">Airmen</th>
-                        <th className="pb-3 text-right">PT / Wk</th>
-                        <th className="pb-3 text-right">OFT Lanes</th>
-                        <th className="pb-3 text-right">Rehab</th>
-                        <th className="pb-3 text-right">Reconditioning</th>
-                        <th className="pb-3 text-right">Capacity</th>
-                        <th className="pb-3 w-1/4 text-right">Load</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                      {[
-                        { fl: "Alpha", air: "38", pt: "10", oft: "2/3", rehab: "3", cond: "2", cap: "12", pct: "80%", col: "bg-emerald-500" },
-                        { fl: "Bravo", air: "42", pt: "11", oft: "2/3", rehab: "2", cond: "2", cap: "12", pct: "75%", col: "bg-amber-500" },
-                        { fl: "Charlie", air: "32", pt: "7", oft: "1/1", rehab: "1", cond: "1", cap: "8", pct: "60%", col: "bg-emerald-500" },
-                        { fl: "Total", air: "112", pt: "28", oft: "5/7", rehab: "6", cond: "5", cap: "32", pct: "70%", col: "bg-[var(--brand-color)]", bold: true }
-                      ].map((row, idx) => (
-                        <tr key={idx} className={`hover:bg-slate-50/20 transition ${row.bold ? "font-bold text-slate-800 dark:text-white" : ""}`}>
-                          <td className="py-3 font-bold">{row.fl}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.air}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.pt}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.oft}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.rehab}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.cond}</td>
-                          <td className="py-3 text-right font-mono text-slate-500">{row.cap}</td>
-                          <td className="py-3 text-right">
-                            <div className="flex items-center justify-end gap-2 font-mono text-[10px]">
-                              <span>{row.pct}</span>
-                              <div className="w-20 h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${row.col}`} style={{ width: row.pct }}></div>
-                              </div>
-                            </div>
-                          </td>
+                {flightLoadLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading flight workload…</p>
+                ) : !flightLoad || flightLoad.flights.length === 0 ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">
+                    No flights currently meet the cohort minimum (k≥{flightLoad?.min_cohort_size ?? 5}) for this view.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <th className="pb-3">Flight</th>
+                          <th className="pb-3 text-right">Airmen</th>
+                          <th className="pb-3 text-right">Active Reconditioning</th>
+                          <th className="pb-3 w-1/3 text-right">Load</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                        {flightLoad.flights.map((row) => (
+                          <tr key={row.flight_id} className="hover:bg-slate-50/20 transition">
+                            <td className="py-3 font-bold">{row.flight_name}</td>
+                            <td className="py-3 text-right font-mono text-slate-500">{row.cohort_size}</td>
+                            <td className="py-3 text-right font-mono text-slate-500">{row.active_reconditioning_count}</td>
+                            <td className="py-3 text-right">
+                              <div className="flex items-center justify-end gap-2 font-mono text-[10px]">
+                                <span>{row.load_pct}%</span>
+                                <div className="w-20 h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${row.load_pct >= 75 ? "bg-amber-500" : "bg-emerald-500"}`}
+                                    style={{ width: `${row.load_pct}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
-              {/* SCS Availability Matrix */}
-              <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm text-left space-y-4">
+              {/* SCS Availability Matrix - real, GET /admin/coverage/scs-weekly-availability.
+                  Cell values are real hours logged via CoverageLog for that
+                  day - a 0 means no coverage was logged, not "unavailable"
+                  (there is no separate schedule/off-duty tracking to tell
+                  the two apart). */}
+              <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm text-left space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-white/5 pb-2.5">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">SCS availability &middot; this week</h3>
-                    <MockItemBadge />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">SCS availability · this week</h3>
                   </div>
-                  <p className="text-[10px] text-slate-500">Capacity 0-5 &middot; higher = busier</p>
-                  <div className="flex gap-2 text-[9px] font-bold text-slate-500 items-center select-none font-mono">
-                    <span className="px-1 py-0.2 bg-slate-100 dark:bg-slate-800 rounded">0</span>
-                    <span className="px-1 py-0.2 bg-emerald-100 text-emerald-700 rounded">1</span>
-                    <span className="px-1 py-0.2 bg-cyan-100 text-cyan-700 rounded">2</span>
-                    <span className="px-1 py-0.2 bg-amber-100 text-amber-700 rounded">3</span>
-                    <span className="px-1 py-0.2 bg-orange-100 text-orange-700 rounded">4</span>
-                    <span className="px-1 py-0.2 bg-rose-100 text-rose-700 rounded">5</span>
-                  </div>
+                  <p className="text-[10px] text-slate-500">Hours logged per day · {weeklyAvailability?.week_start} to {weeklyAvailability?.week_end}</p>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                        <th className="pb-3 w-1/4">SCS</th>
-                        <th className="pb-3 text-center">Mon 27</th>
-                        <th className="pb-3 text-center">Tue 28</th>
-                        <th className="pb-3 text-center">Wed 29</th>
-                        <th className="pb-3 text-center">Thu 30</th>
-                        <th className="pb-3 text-center">Fri 31</th>
-                        <th className="pb-3 text-center">Sat 1</th>
-                        <th className="pb-3 text-center">Sun 2</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/5 text-center font-mono">
-                      {[
-                        { scs: "TSgt Lee", title: "Senior SCS", mon: 4, tue: 4, wed: 2, thu: 3, fri: 3, sat: 1, sun: 0 },
-                        { scs: "SSgt Park", title: "SCS - Bravo", mon: 3, tue: 3, wed: 5, thu: 3, fri: 3, sat: 2, sun: 0 },
-                        { scs: "SrA Diaz", title: "SCS - assist", mon: 2, tue: 2, wed: 1, thu: 2, fri: 2, sat: 2, sun: 0 },
-                        { scs: "Capt Shah", title: "PT/IM", mon: 3, tue: 4, wed: 3, thu: 3, fri: 2, sat: 0, sun: 0 },
-                        { scs: "CPT Lead", title: "OFT - tempo", mon: 2, tue: 3, wed: 3, thu: 2, fri: 2, sat: 4, sun: 0 }
-                      ].map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/20 transition">
-                          <td className="py-3 text-left font-bold font-sans">
-                            <span className="text-slate-800 dark:text-white block leading-tight">{row.scs}</span>
-                            <span className="text-[10px] text-slate-400 block font-normal mt-0.5">{row.title}</span>
-                          </td>
-                          {[row.mon, row.tue, row.wed, row.thu, row.fri, row.sat, row.sun].map((val, i) => {
-                            const bg = 
-                              val === 5 ? "bg-rose-500/15 text-rose-500 border border-rose-500/25" :
-                              val === 4 ? "bg-orange-500/15 text-orange-500 border border-orange-500/25" :
-                              val === 3 ? "bg-amber-500/15 text-amber-500 border border-amber-500/25" :
-                              val === 2 ? "bg-cyan-500/15 text-cyan-500 border border-cyan-500/25" :
-                              val === 1 ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25" :
-                              "bg-slate-100 dark:bg-slate-800 text-slate-400";
-                            return (
-                              <td key={i} className="py-3 text-center">
-                                <span className={`inline-block size-6 rounded-md font-bold text-xs flex items-center justify-center mx-auto ${bg}`}>
-                                  {val}
-                                </span>
-                              </td>
-                            );
-                          })}
+                {weeklyAvailabilityLoading ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">Loading availability…</p>
+                ) : !weeklyAvailability || weeklyAvailability.providers.length === 0 ? (
+                  <p className="text-[10px] text-slate-400 py-6 text-center">No active SCS providers found.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <th className="pb-3 w-1/4">SCS</th>
+                          {weeklyAvailability.day_keys.map((day) => (
+                            <th key={day} className="pb-3 text-center">
+                              {new Date(day).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}
+                            </th>
+                          ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <p className="text-[9px] text-slate-500 font-mono text-left pt-2 border-t border-slate-100 dark:border-white/5">
-                  Peak Wednesday - SSgt Park at 5/5. Recommend splitting Wed OFT prep between two leads.
-                </p>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5 text-center font-mono">
+                        {weeklyAvailability.providers.map((row) => (
+                          <tr key={row.provider_id} className="hover:bg-slate-50/20 transition">
+                            <td className="py-3 text-left font-bold font-sans">
+                              <span className="text-slate-800 dark:text-white block leading-tight">{row.provider_name}</span>
+                              <span className="text-[10px] text-slate-400 block font-normal mt-0.5">{row.week_total_hours}h total</span>
+                            </td>
+                            {weeklyAvailability!.day_keys.map((day) => {
+                              const hours = row.days[day] ?? 0;
+                              const bg =
+                                hours >= 8 ? "bg-rose-500/15 text-rose-500 border border-rose-500/25" :
+                                hours >= 4 ? "bg-amber-500/15 text-amber-500 border border-amber-500/25" :
+                                hours > 0 ? "bg-emerald-500/15 text-emerald-500 border border-emerald-500/25" :
+                                "bg-slate-100 dark:bg-slate-800 text-slate-400";
+                              return (
+                                <td key={day} className="py-3 text-center">
+                                  <span className={`inline-block min-w-6 px-1 rounded-md font-bold text-xs flex items-center justify-center mx-auto ${bg}`}>
+                                    {hours}
+                                  </span>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Bottom splits roster table & leave widgets */}
@@ -2894,87 +3186,109 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Leave overlap, Hours coverage grid */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs text-left font-sans items-stretch">
                 
-                {/* Leave Overlap */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4">
+                {/* Leave Overlap - real, GET /admin/leave/overlap. */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-slate-900 dark:text-white">Leave overlap - next 30 days</h3>
-                    <MockItemBadge />
                   </div>
-                  <p className="text-[9px] text-slate-500">SCS, PT/IM, OFT staff</p>
+                  <p className="text-[9px] text-slate-500">Real leave records, window_days={leaveOverlap?.window_days ?? 30}</p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
-                    <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
-                      <span className="font-extrabold text-slate-800 dark:text-white block">TSgt Lee</span>
-                      <span className="text-[10px] text-slate-500 block font-mono">No leave</span>
+                  {leaveOverlapLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading leave records…</p>
+                  ) : !leaveOverlap || leaveOverlap.records.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">No leave scheduled in this window.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+                      {leaveOverlap.records.map((rec) => {
+                        const overlapping = leaveOverlap.overlapping_pairs.filter(
+                          (p) => p.record_id_a === rec.id || p.record_id_b === rec.id
+                        );
+                        const isOverlapping = overlapping.length > 0;
+                        return (
+                          <div
+                            key={rec.id}
+                            className={
+                              isOverlapping
+                                ? "bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl space-y-1 text-center"
+                                : "bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1"
+                            }
+                          >
+                            <span className={`font-extrabold block ${isOverlapping ? "text-amber-600" : "text-slate-800 dark:text-white"}`}>
+                              {rec.user_name || "Unknown"}
+                            </span>
+                            <span className={`text-[10px] block font-mono ${isOverlapping ? "text-amber-500" : "text-slate-500"}`}>
+                              {rec.leave_type_label} · {rec.start_date} - {rec.end_date}
+                            </span>
+                            {isOverlapping && (
+                              <span className="px-1.5 py-0.2 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
+                                overlap · {overlapping[0].overlap_days}d
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    
-                    <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl space-y-1 text-center">
-                      <span className="font-extrabold text-amber-600 block">SSgt Park</span>
-                      <span className="text-[10px] text-amber-500 block font-mono">27 Jul - 29 Jul · 3 days</span>
-                      <span className="px-1.5 py-0.2 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded uppercase">
-                        overlap Med
-                      </span>
-                    </div>
-
-                    <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl space-y-1">
-                      <span className="font-extrabold text-slate-800 dark:text-white block">SrA Diaz</span>
-                      <span className="text-[10px] text-slate-500 block font-mono">No leave</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
-                {/* Hours Coverage stats */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                {/* Hours Coverage stats - real, GET /admin/coverage/schedule-vs-worked. */}
+                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2">
                     <div className="text-left flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">SCS hours coverage</h3>
-                      <MockItemBadge />
                     </div>
-                    <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked</p>
+                    <p className="text-[9px] text-slate-500 leading-none mt-0.5">Scheduled + worked · {currentYear}</p>
                     <span className="px-2 py-0.2 bg-[var(--brand-color)]/15 text-[var(--brand-color)] text-[8px] font-bold rounded uppercase font-mono">
                       95% target
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-xs font-sans text-left">
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">160</span>
-                      <span className="text-[9px] text-slate-500 block">Cap 200</span>
+                  {scheduleVsWorkedLoading ? (
+                    <p className="text-[10px] text-slate-400 py-6 text-center">Loading…</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4 text-xs font-sans text-left">
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Scheduled</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_scheduled_hours ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">{scheduleVsWorked?.entries_with_schedule ?? 0} logged entries</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_worked_hours ?? 0}</span>
+                        <span className="text-[9px] text-emerald-500 block">
+                          {scheduleVsWorked?.worked_pct_of_scheduled !== null && scheduleVsWorked?.worked_pct_of_scheduled !== undefined
+                            ? `${scheduleVsWorked.worked_pct_of_scheduled}% of scheduled`
+                            : "No schedule logged yet"}
+                        </span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">{scheduleVsWorked?.total_worked_hours ?? 0} / 2,080</span>
+                        <span className="text-[9px] text-slate-500 block">DOCX annual target</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
+                        <span className="font-bold text-rose-500 block">{scheduleVsWorked?.missed_count ?? 0}</span>
+                        <span className="text-[9px] text-slate-500 block">vs scheduled hours</span>
+                      </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Worked</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">152</span>
-                      <span className="text-[9px] text-emerald-500 block">95% of scheduled</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">YTD Annual</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">1,128 / 2,080</span>
-                      <span className="text-[9px] text-slate-500 block">54% on pace</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="text-[8px] text-slate-400 block uppercase font-mono">Missed</span>
-                      <span className="font-bold text-rose-500 block">8</span>
-                      <span className="text-[9px] text-slate-500 block">2 due to leave</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
               </div>
 
               {/* RSD Coverage block split with RTP+RTD box */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-left font-sans items-stretch">
-                
-                {/* RSD coverage */}
-                <div className="bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+
+                {/* RSD coverage - real, GET /admin/coverage/rsd-summary. */}
+                <div className="bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
                     <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">RSD coverage (separate)</h3>
-                      <MockItemBadge />
                     </div>
                     <p className="text-[9px] text-slate-500">Restricted-status duty sessions tracked separately</p>
                     <span className="px-2 py-0.5 bg-amber-500/10 text-amber-500 text-[8px] font-bold rounded font-mono">
-                      36 / 20
+                      {rsdSummaryLoading ? "…" : `${rsdSummary?.total_rsd_hours ?? 0}h / ${rsdSummary?.session_count ?? 0} sessions`}
                     </span>
                   </div>
 
@@ -3042,15 +3356,15 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
               {/* Chat View splits grid */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start text-left font-sans text-xs">
                 
-                {/* Left Side: Inbox search list */}
-                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl p-5 shadow-sm space-y-4">
+                {/* Left Side: Inbox search list - real, GET /messaging/threads. */}
+                <div className="lg:col-span-4 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/5 pb-2.5">
                     <div className="flex items-center gap-2">
                       <h3 className="text-xs font-bold text-slate-900 dark:text-white">Inbox</h3>
                       <MockItemBadge />
                     </div>
                     <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-600 text-[8.5px] font-bold rounded-full uppercase tracking-wider font-mono">
-                      7 unread
+                      {threads.reduce((sum, t) => sum + t.unread_count, 0)} unread
                     </span>
                   </div>
 
@@ -3060,6 +3374,8 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                       type="text"
                       aria-label="Search messages"
                       placeholder="Search messages"
+                      value={threadSearch}
+                      onChange={(e) => setThreadSearch(e.target.value)}
                       className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-55 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400"
                     />
                     <Search className="absolute left-3 top-2.5 size-4 text-slate-400" />
@@ -3067,96 +3383,113 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
 
                   {/* Chats list */}
                   <div className="space-y-2">
-                    {[
-                      { name: "J. Reyes", role: "SrA · Alpha flight", preview: "Ready for mobility \u2014 good to move to bloc...", time: "06:18", unread: 2 },
-                      { name: "A. Mendez", role: "SSgt · Bravo flight", preview: "Sleep timing past 3 nights", time: "Yest", unread: 1 },
-                      { name: "T. Cho", role: "A1C · Alpha flight", preview: "OFT cleared \u2014 thanks TSgt", time: "Yest", unread: 1 },
-                      { name: "D. Okafor", role: "SSgt · Alpha flight", preview: "Hip \u2014 still tight after rehab", time: "23 Jul", unread: 3 },
-                      { name: "B. Ndiaye", role: "A1C · Charlie flight", preview: "Mobility reset \u2014 what level?", time: "25 Jul" },
-                      { name: "K. Patel", role: "A1C · Bravo flight", preview: "OFT tempo prep · week 2", time: "24 Jul" },
-                      { name: "M. Hayes", role: "SrA · Alpha flight", preview: "Cycle 4 \u2014 red-line felt good", time: "20 Jul" },
-                      { name: "Capt Shah · PT/IM", role: "Clinician co-owner", preview: "Coordination checklist response", time: "19 Jul" }
-                    ].map((chat, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() => {
-                          setSelectedChatId(chat.name);
-                          triggerToast(`Switched thread: ${chat.name}`);
-                        }}
-                        className={`p-3 rounded-xl border text-left cursor-pointer transition ${
-                          selectedChatId === chat.name 
-                            ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]" 
-                            : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 hover:border-slate-300"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between font-mono text-[9px] gap-2">
-                          <span className="font-bold text-slate-800 dark:text-white font-sans text-xs">{chat.name}</span>
-                          <span className="text-slate-500">{chat.time}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 block leading-tight mt-0.5 font-sans font-medium">{chat.role}</span>
-                        <div className="flex items-center justify-between gap-4 mt-2">
-                          <p className="text-[10px] text-slate-500 truncate w-48 font-sans">{chat.preview}</p>
-                          {chat.unread && (
-                            <span className="size-4 bg-[var(--brand-color)] text-white text-[8px] font-bold rounded-full flex items-center justify-center font-mono">
-                              {chat.unread}
+                    {threadsLoading ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">Loading threads…</p>
+                    ) : threads.length === 0 ? (
+                      <p className="text-[10px] text-slate-400 py-6 text-center">No messages yet.</p>
+                    ) : (
+                      threads
+                        .filter((t) => {
+                          const q = threadSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            (t.other_user_name || "").toLowerCase().includes(q) ||
+                            t.last_message_body.toLowerCase().includes(q)
+                          );
+                        })
+                        .map((chat) => (
+                          <div
+                            key={chat.other_user_id}
+                            onClick={() => void openThread(chat.other_user_id)}
+                            className={`p-3 rounded-xl border text-left cursor-pointer transition ${
+                              selectedChatId === chat.other_user_id
+                                ? "bg-[var(--brand-color)]/10 border-[var(--brand-color)]/30 text-[var(--brand-color)]"
+                                : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5 hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between font-mono text-[9px] gap-2">
+                              <span className="font-bold text-slate-800 dark:text-white font-sans text-xs">
+                                {chat.other_user_name || "Unknown"}
+                              </span>
+                              <span className="text-slate-500">{formatRelativeShort(chat.last_message_at)}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 block leading-tight mt-0.5 font-sans font-medium">
+                              {chat.other_user_role}
                             </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                            <div className="flex items-center justify-between gap-4 mt-2">
+                              <p className="text-[10px] text-slate-500 truncate w-48 font-sans">{chat.last_message_body}</p>
+                              {chat.unread_count > 0 && (
+                                <span className="size-4 bg-[var(--brand-color)] text-white text-[8px] font-bold rounded-full flex items-center justify-center font-mono">
+                                  {chat.unread_count}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                    )}
                   </div>
 
                 </div>
 
-                {/* Right Side: Active Chat dialog thread */}
-                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-rose-300 dark:border-rose-500/30 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
+                {/* Right Side: Active Chat dialog thread - real. */}
+                <div className="lg:col-span-8 bg-white dark:bg-[#0e1628] border border-slate-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col justify-between h-[650px] overflow-hidden">
                   
-                  {/* Chat Header */}
+                  {/* Chat Header - real. */}
                   <div className="p-4 border-b border-slate-100 dark:border-white/5 bg-[#f8fafc] dark:bg-slate-900/60 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="size-8 rounded-full bg-cyan-500/10 text-[var(--brand-color)] font-bold text-xs flex items-center justify-center select-none font-mono">
-                        {selectedChatId.charAt(0)}
+                        {(selectedThread?.other_user_name || "?").charAt(0)}
                       </div>
                       <div className="text-left">
-                        <span className="font-bold text-slate-800 dark:text-white block text-sm">{selectedChatId}</span>
+                        <span className="font-bold text-slate-800 dark:text-white block text-sm">
+                          {selectedThread?.other_user_name || "Select a thread"}
+                        </span>
                         <span className="text-[10px] text-slate-500 block mt-0.5">
-                          {selectedChatId === "J. Reyes" ? "SrA · Alpha flight · Rehab Block 2" : "Active chat recipient"}
+                          {selectedThread?.other_user_role || "—"}
                         </span>
                       </div>
                     </div>
 
-                    {selectedChatId === "J. Reyes" && (
-                      <button 
-                        onClick={() => { setReviewingAirmanId("J. Reyes"); triggerToast("Opening full profile for J. Reyes"); }}
-                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-[10px] font-bold rounded-lg text-rose-700 dark:text-rose-200 transition cursor-pointer"
+                    {selectedThread && (
+                      <button
+                        onClick={() => {
+                          setReviewingAirmanId(selectedThread.other_user_name || selectedThread.other_user_id);
+                          triggerToast(`Opening full profile for ${selectedThread.other_user_name}`);
+                        }}
+                        className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800 text-[10px] font-bold rounded-lg text-slate-700 dark:text-slate-200 transition cursor-pointer"
                       >
                         View profile
                       </button>
                     )}
                   </div>
 
-                  {/* Chat bubbles list */}
+                  {/* Chat bubbles list - real. */}
                   <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-50/50 dark:bg-[#0e1628]">
-                    
-                    {/* Timestamp separator */}
-                    <div className="text-center font-mono text-[9px] text-slate-400 select-none uppercase tracking-wider">
-                      27 July
-                    </div>
-
-                    {(chatThreads[selectedChatId] || []).map((msg, i) => (
-                      <div key={i} className={`flex ${msg.sender === "scs" ? "justify-end" : "justify-start"}`}>
-                        <div className={`p-4 rounded-2xl max-w-sm text-xs leading-relaxed space-y-1.5 ${
-                          msg.sender === "scs" 
-                            ? "bg-[#008094] text-white rounded-tr-none text-left" 
-                            : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 text-slate-700 dark:text-slate-300 rounded-tl-none text-left"
-                        }`}>
-                          <p className="font-sans font-medium">{msg.text}</p>
-                          <span className={`text-[8px] font-mono block text-right leading-none ${
-                            msg.sender === "scs" ? "text-cyan-200" : "text-slate-400"
-                          }`}>{msg.time}</span>
-                        </div>
-                      </div>
-                    ))}
+                    {activeThreadLoading ? (
+                      <p className="text-[10px] text-slate-400 text-center py-6">Loading messages…</p>
+                    ) : !selectedChatId ? (
+                      <p className="text-[10px] text-slate-400 text-center py-6">Select a thread on the left to view messages.</p>
+                    ) : activeThreadMessages.length === 0 ? (
+                      <p className="text-[10px] text-slate-400 text-center py-6">No messages yet. Say hello below.</p>
+                    ) : (
+                      activeThreadMessages.map((msg) => {
+                        const mine = msg.sender_id === currentUser?.id;
+                        return (
+                          <div key={msg.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                            <div className={`p-4 rounded-2xl max-w-sm text-xs leading-relaxed space-y-1.5 ${
+                              mine
+                                ? "bg-[#008094] text-white rounded-tr-none text-left"
+                                : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 text-slate-700 dark:text-slate-300 rounded-tl-none text-left"
+                            }`}>
+                              <p className="font-sans font-medium">{msg.body}</p>
+                              <span className={`text-[8px] font-mono block text-right leading-none ${
+                                mine ? "text-cyan-200" : "text-slate-400"
+                              }`}>{formatRelativeShort(msg.created_at)}</span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
 
                   </div>
 
@@ -3170,18 +3503,20 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        aria-label={`Message ${selectedChatId}`}
-                        placeholder={`Message ${selectedChatId}`}
+                        aria-label={`Message ${selectedThread?.other_user_name || ""}`}
+                        placeholder={selectedThread ? `Message ${selectedThread.other_user_name}` : "Select a thread first"}
                         value={typedMessage}
+                        disabled={!selectedChatId || sendingMessage}
                         onChange={(e) => setTypedMessage(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                        className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400"
+                        onKeyDown={(e) => e.key === "Enter" && void handleSendMessage()}
+                        className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/5 focus:outline-none focus:border-[var(--brand-color)] text-slate-800 dark:text-white placeholder-slate-400 disabled:opacity-60"
                       />
-                      <button 
-                        onClick={handleSendMessage}
-                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                      <button
+                        onClick={() => void handleSendMessage()}
+                        disabled={!selectedChatId || sendingMessage || !typedMessage.trim()}
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        Send
+                        {sendingMessage ? "Sending…" : "Send"}
                       </button>
                     </div>
 

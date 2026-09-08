@@ -37,6 +37,9 @@ type LeadershipContextType = {
   refreshData: (toastMsg?: string) => Promise<void>;
   isMutating: boolean;
   setIsMutating: (val: boolean) => void;
+  toastShow: boolean;
+  toastMessage: string;
+  triggerToast: (msg: string) => void;
 };
 
 const LeadershipContext = createContext<LeadershipContextType | undefined>(undefined);
@@ -45,7 +48,7 @@ export function LeadershipProvider({ children }: { children: React.ReactNode }) 
   const accessToken = useAuthStore((state) => state.accessToken);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const isHydrated = useAuthStore((state) => state.isHydrated);
-  const { triggerToast } = useToast();
+  const { show: toastShow, message: toastMessage, triggerToast } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +130,9 @@ export function LeadershipProvider({ children }: { children: React.ReactNode }) 
         refreshData,
         isMutating,
         setIsMutating,
+        toastShow,
+        toastMessage,
+        triggerToast,
       }}
     >
       {children}
