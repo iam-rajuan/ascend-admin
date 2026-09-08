@@ -1112,6 +1112,7 @@ export type SpecialistNoteEntry = {
   user_concern: string;
   action_assigned: string | null;
   follow_up_needed: boolean;
+  follow_up_due_date: string | null;
   status: string;
   documentation_status: string;
   signed_at: string | null;
@@ -1127,12 +1128,26 @@ export async function listSpecialistNotes(accessToken: string, userId: string) {
 export async function createSpecialistNote(
   accessToken: string,
   userId: string,
-  payload: { title: string; user_concern: string; action_assigned?: string; follow_up_needed?: boolean; note_type?: string; escalated?: boolean },
+  payload: {
+    title: string;
+    user_concern: string;
+    action_assigned?: string;
+    follow_up_needed?: boolean;
+    follow_up_due_date?: string;
+    note_type?: string;
+    escalated?: boolean;
+  },
 ) {
   return request<SpecialistNoteEntry>(accessToken, `/specialist-notes/${userId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+export async function signSpecialistNote(accessToken: string, noteId: string) {
+  return request<SpecialistNoteEntry>(accessToken, `/specialist-notes/${noteId}/sign`, {
+    method: "PATCH",
   });
 }
 
@@ -1627,6 +1642,7 @@ export type SpecialistSessionSummary = {
   topic: string | null;
   capacity: number | null;
   capacity_pct: number | null;
+  planned_duration_minutes: number | null;
   status: string;
   prep_checklist: ChecklistItem[];
   prep_ready: boolean;
@@ -1652,6 +1668,7 @@ export async function createSpecialistSession(
     group_label?: string;
     topic?: string;
     capacity?: number;
+    planned_duration_minutes?: number;
     prep_checklist_items?: string[];
   },
 ) {
@@ -1715,5 +1732,152 @@ export async function getSpecialistSessionQueueSummary(accessToken: string) {
 
 export async function downloadMessageAttachment(accessToken: string, messageId: string) {
   return request<RecordFileDownloadResponse>(accessToken, `/messaging/message/${messageId}/attachment`);
+}
+
+// Real shapes from chaplain_service.py - anonymized codes only, never a
+// real name or rank (matches the Chaplain/Purpose pathway's own "No rank,
+// no PII" caseload rule).
+// Real shapes from mp_service.py - anonymized codes only.
+export type MpCaseloadRow = {
+  user_id: string;
+  airman_code: string;
+  referral_reason: string | null;
+  last_session_date: string | null;
+  next_session_date: string | null;
+  queue_status: "new" | "follow_up" | "scheduled" | "active";
+};
+
+export type MpCaseloadResponse = {
+  caseload: MpCaseloadRow[];
+};
+
+export async function getMpCaseload(accessToken: string) {
+  return request<MpCaseloadResponse>(accessToken, "/mp/caseload");
+}
+
+export type MpDashboardSummary = {
+  active_caseload_count: number;
+  individual_count: number;
+  group_count: number;
+  referrals_this_week_count: number;
+  self_referrals_this_week: number;
+  scs_referrals_this_week: number;
+  pt_im_referrals_this_week: number;
+  sessions_today_count: number;
+  next_session_time: string | null;
+  next_session_airman_code: string | null;
+  follow_ups_due_today_count: number;
+  follow_ups_due_this_week_count: number;
+};
+
+export async function getMpDashboardSummary(accessToken: string) {
+  return request<MpDashboardSummary>(accessToken, "/mp/dashboard-summary");
+}
+
+export type ChaplainCaseloadRow = {
+  user_id: string;
+  airman_code: string;
+  is_new: boolean;
+  opt_in_date: string;
+  reflection_cadence: string | null;
+  last_contact_at: string | null;
+  last_contact_type: string | null;
+  suggested_action: "welcome" | "message";
+};
+
+export type ChaplainCaseloadResponse = {
+  caseload: ChaplainCaseloadRow[];
+};
+
+export async function getChaplainCaseload(accessToken: string) {
+  return request<ChaplainCaseloadResponse>(accessToken, "/chaplain/caseload");
+}
+
+export type ChaplainDashboardSummary = {
+  opted_in_count: number;
+  opted_in_count_delta_this_month: number;
+  active_reflections_count: number;
+  consults_today_count: number;
+  first_time_engagement_count: number;
+};
+
+export async function getChaplainDashboardSummary(accessToken: string) {
+  return request<ChaplainDashboardSummary>(accessToken, "/chaplain/dashboard-summary");
+}
+
+export type ChaplainOptInAuditEntry = {
+  user_id: string;
+  airman_code: string;
+  status: string;
+  status_label: string;
+  recorded_at: string;
+  method: string | null;
+  method_label: string | null;
+  witness_name: string | null;
+};
+
+export type ChaplainOptInAuditResponse = {
+  entries: ChaplainOptInAuditEntry[];
+};
+
+export type ChaplainPastoralCareSession = {
+  id: string;
+  start_time: string;
+  planned_duration_minutes: number | null;
+  airman_code: string | null;
+  group_label: string | null;
+  topic: string | null;
+  category: "first_time" | "returning" | "brief" | "group";
+  status: string;
+};
+
+export type ChaplainPastoralCareTodayResponse = {
+  sessions: ChaplainPastoralCareSession[];
+};
+
+export async function getChaplainPastoralCareToday(accessToken: string) {
+  return request<ChaplainPastoralCareTodayResponse>(accessToken, "/chaplain/pastoral-care-today");
+}
+
+export async function getChaplainOptInAudit(accessToken: string) {
+  return request<ChaplainOptInAuditResponse>(accessToken, "/chaplain/opt-in-audit");
+}
+
+// Real shape from reflection_service.py's caseload-wide serializer.
+export type CaseloadReflectionEntry = {
+  id: string;
+  theme: string;
+  body: string;
+  length_chars: number;
+  word_count: number;
+  created_at: string;
+  airman_code: string;
+  flag: "tender" | "pastoral";
+};
+
+export type CaseloadReflectionsResponse = {
+  reflections: CaseloadReflectionEntry[];
+};
+
+export async function getCaseloadReflections(
+  accessToken: string,
+  params?: { theme?: string; date_from?: string; date_to?: string },
+) {
+  const query = new URLSearchParams();
+  if (params?.theme) query.set("theme", params.theme);
+  if (params?.date_from) query.set("date_from", params.date_from);
+  if (params?.date_to) query.set("date_to", params.date_to);
+  const qs = query.toString();
+  return request<CaseloadReflectionsResponse>(accessToken, `/reflections/caseload${qs ? `?${qs}` : ""}`);
+}
+
+export type ReflectionThemeBreakdownResponse = {
+  window_days: number;
+  total_entries: number;
+  themes: Array<{ theme: string; count: number }>;
+};
+
+export async function getReflectionThemeBreakdown(accessToken: string, windowDays = 30) {
+  return request<ReflectionThemeBreakdownResponse>(accessToken, `/reflections/caseload/theme-breakdown?window_days=${windowDays}`);
 }
 
