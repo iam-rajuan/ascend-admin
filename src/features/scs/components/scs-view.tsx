@@ -696,13 +696,13 @@ export function ScsView({ activeTab = "overview" }: { activeTab?: TabType }) {
   // Sync auth check (mount state now comes from useTheme())
   useEffect(() => {
     if (hasMounted && !isAuthenticated) {
-      router.push("/");
+      router.push("/sign-in");
     }
   }, [isAuthenticated, hasMounted, router]);
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   // Auth verified in layout

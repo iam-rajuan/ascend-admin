@@ -19,7 +19,6 @@ import {
   Moon,
   Sun,
   TrendingUp,
-  Users,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -40,7 +39,7 @@ function LeadershipLayoutInner({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   const getSubSection = () => {
@@ -146,6 +145,12 @@ function LeadershipLayoutInner({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-2">
               <span className="size-1.5 rounded-full bg-[var(--brand-color)]" />
               <span>CUI // OPSEC · Leadership screens are aggregate only and enforce cohort suppression from the live backend.</span>
+            </div>
+          </section>
+
+          <section className="z-10 flex min-h-9 w-full flex-shrink-0 items-center justify-center border-b border-slate-200 bg-white px-6 py-2 text-center text-[10px] font-semibold text-slate-500 dark:border-white/5 dark:bg-[#0e1628] dark:text-slate-400">
+            <div className="max-w-5xl">
+              Leaders receive privacy-protected aggregate trends. Individual health or performance information is only available to authorized roles according to defined access, consent, and workflow requirements.
             </div>
           </section>
 

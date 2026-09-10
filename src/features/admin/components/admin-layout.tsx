@@ -105,7 +105,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (hasMounted && isHydrated && !isAuthenticated) {
-      router.push("/");
+      router.push("/sign-in");
     }
   }, [isAuthenticated, hasMounted, isHydrated, router]);
 
@@ -118,7 +118,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   if (!hasMounted || !isHydrated || !isAuthenticated) return null;

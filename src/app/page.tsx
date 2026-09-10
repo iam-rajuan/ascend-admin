@@ -1,257 +1,199 @@
-"use client";
-
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  Clock,
-  Eye,
-  EyeOff,
-  KeyRound,
-  Lock,
-  Mail,
-  Moon,
-  ShieldCheck,
-  Sun,
-} from "lucide-react";
-import { AscendBanner } from "@/components/ascend-banner";
+import { ArrowRight, BarChart3, CheckCircle2, ClipboardCheck, Compass, HeartPulse, Layers3, ShieldCheck, UsersRound } from "lucide-react";
 import { AscendLogo } from "@/components/ascend-logo";
-import { useTheme } from "@/hooks/use-theme";
-import { useAuthStore } from "@/store/auth-store";
+import { PublicPageShell, Section } from "@/components/public/public-shell";
+
+const domains = ["Physical Performance", "Recovery & Sleep", "Nutrition", "Mental Performance", "Purpose & Connection"];
+const outcomes = ["Earlier Risk Identification", "Better Continuity", "More Targeted Support", "Greater Individual Agency", "Actionable Organizational Insight"];
+const workflowSteps = [
+  { title: "ASSESS — Capture brief, recurring health and performance signals.", icon: ClipboardCheck },
+  { title: "ADAPT — Translate those signals into one practical next action and route support when needed.", icon: Compass },
+  { title: "ASCEND — Build healthier performance patterns while authorized leaders see privacy-protected aggregate trends.", icon: BarChart3 },
+];
 
 export default function Home() {
-  const router = useRouter();
-  const { theme, toggleTheme, mounted } = useTheme();
-  const isHydrated = useAuthStore((state) => state.isHydrated);
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const isLoading = useAuthStore((state) => state.isLoading);
-  const authError = useAuthStore((state) => state.authError);
-  const loginWithPassword = useAuthStore((state) => state.loginWithPassword);
-
-  const [email, setEmail] = useState("dash-admin@ascend.mil");
-  const [password, setPassword] = useState("AscendDash!2026");
-  const [rememberMe, setRememberMe] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  useEffect(() => {
-    if (isHydrated && isAuthenticated) {
-      router.replace("/roles");
-    }
-  }, [isAuthenticated, isHydrated, router]);
-
-  const handleSignIn = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setFormError("");
-
-    const result = await loginWithPassword(email, password, rememberMe);
-    if (!result.ok) {
-      setFormError(result.error);
-      return;
-    }
-
-    router.replace("/roles");
-  };
-
   return (
-    <div className="flex h-screen max-h-screen w-screen flex-col overflow-hidden bg-[#f8fafc] font-sans text-slate-800 transition-colors duration-200 dark:bg-[#070a13] dark:text-slate-100">
-      <header className="z-20 flex h-14 w-full flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 dark:border-white/5 dark:bg-[#0e1628] md:px-8">
-        <div className="flex items-center gap-2">
-          <AscendLogo width={20} height={20} showDetails={false} />
-          <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Ascend</span>
-          <span className="select-none text-xs font-light text-slate-400">/</span>
-          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Staff sign-in</span>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <button
-            onClick={toggleTheme}
-            className="flex size-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-all duration-200 hover:bg-slate-50 dark:border-white/10 dark:bg-[#070a13] dark:text-slate-300 dark:hover:bg-slate-900"
-            title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
-            type="button"
-          >
-            {theme === "light" ? <Moon className="size-4" /> : <Sun className="size-4" />}
-          </button>
-
-          <div className="flex items-center gap-1.5 select-none text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            <span>CONNECTED BACKEND</span>
-            <span className="relative flex size-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-            </span>
+    <PublicPageShell>
+      <section id="ascend" className="px-5 py-14 sm:px-6 lg:px-8 lg:py-20">
+        <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+          <div>
+            <p className="text-xs font-extrabold uppercase tracking-[0.24em] text-[var(--brand-color)]">ASCEND™ BY DOMINION PERFORMANCE</p>
+            <h1 className="mt-5 max-w-4xl text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl lg:text-6xl">
+              Identify emerging health and performance risk before it becomes operational loss.
+            </h1>
+            <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-600 dark:text-slate-300">
+              Ascend is a preventive health and human performance platform that turns recurring readiness signals into practical action, appropriate support, and privacy-protected organizational insight.
+            </p>
+            <p className="mt-5 max-w-3xl text-base leading-7 text-slate-600 dark:text-slate-300">
+              Dominion Performance is a preventive health and human performance company developing systems that help organizations identify emerging risk earlier and connect people to timely action and support.
+            </p>
+            <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600 dark:text-slate-300">
+              Dominion Performance is a preventive health and human performance company focused on identifying emerging health and performance risks early, guiding practical action, and helping organizations reduce preventable human and operational loss.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link href="/contact" className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-color)] px-5 py-3 text-sm font-extrabold text-white shadow-sm transition hover:bg-[var(--brand-color-hover)]">
+                Request a Demo
+                <ArrowRight className="size-4" />
+              </Link>
+              <Link href="/sign-in" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-extrabold text-slate-800 transition hover:border-[var(--brand-color)] dark:border-white/10 dark:bg-slate-900 dark:text-white">
+                Pilot / Authorized User Sign In
+              </Link>
+            </div>
           </div>
-        </div>
-      </header>
 
-      <section className="z-10 flex h-8 w-full flex-shrink-0 items-center justify-center bg-[#101b22] px-6 text-center text-[10px] font-semibold tracking-wider text-slate-400">
-        <div className="flex items-center gap-2">
-          <span className="size-1.5 rounded-full bg-[#0da2b3]" />
-          <span>CUI // OPSEC · Staff auth is now routed through the live Ascend API</span>
+          <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-[#0e1628]">
+            <div className="flex items-center gap-4">
+              <AscendLogo width={56} height={56} showDetails={true} />
+              <div>
+                <p className="text-xs font-extrabold uppercase tracking-[0.24em] text-[#e2b13c]">Assess. Adapt. Ascend.</p>
+                <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950 dark:text-white">Preventive health infrastructure for human readiness.</h2>
+              </div>
+            </div>
+            <div className="mt-8 grid gap-3 sm:grid-cols-2">
+              {domains.map((domain) => (
+                <div key={domain} className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700 dark:border-white/10 dark:bg-slate-950/40 dark:text-slate-200">
+                  {domain}
+                </div>
+              ))}
+            </div>
+            <p className="mt-5 text-sm font-extrabold text-slate-700 dark:text-slate-200">Physical Performance | Recovery & Sleep | Nutrition | Mental Performance | Purpose & Connection.</p>
+            <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-300">Privacy-conscious by design — with role-based access, protected workflows, and aggregate organizational reporting.</p>
+            <p className="mt-6 rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300">
+              Ascend™ is a commercial Dominion Performance product and is not a U.S. Government or Department of Defense program.
+            </p>
+          </div>
         </div>
       </section>
 
-      <main className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-2">
-        <section className="flex flex-col justify-between overflow-hidden border-r border-slate-200 bg-white p-6 dark:border-white/5 dark:bg-[#0e1628] sm:p-8 lg:p-12">
-          <div className="flex items-center gap-3">
-            <AscendLogo width={32} height={32} showDetails={true} />
-            <div>
-              <h1 className="text-lg font-extrabold leading-none tracking-tight text-slate-900 dark:text-white">Ascend</h1>
-              <p className="mt-0.5 text-[11px] font-semibold text-slate-400">Provider workspace</p>
-            </div>
+      <Section id="solutions" eyebrow="Solutions" title="The gap is between the moments that matter.">
+        <div className="grid gap-8 lg:grid-cols-2">
+          <p className="text-lg leading-8 text-slate-600 dark:text-slate-300">
+            Health and performance risks often emerge between appointments, drills, coaching sessions, and onsite support. By the time those risks become visible through injury, burnout, absence, or declining performance, the opportunity for early action may already be lost.
+          </p>
+          <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+            <h3 className="text-xl font-extrabold text-slate-950 dark:text-white">The real readiness test happens in the other 28 days.</h3>
+            <p className="mt-4 leading-7 text-slate-600 dark:text-slate-300">
+              Guard and Reserve service members spend most of each month away from centralized health and performance resources. Ascend helps extend preventive support between drills through brief check-ins, practical actions, and appropriate routing to human support.
+            </p>
           </div>
+        </div>
+      </Section>
 
-          <div className="mx-auto my-auto w-full max-w-md space-y-5">
-            <div>
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.24em] text-[#0da2b3]">Authentication</p>
-              <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-4xl">
-                Sign in
-              </h2>
-              <p className="mt-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Use your staff account from the API collection. Role routing is automatic after sign-in.
-              </p>
+      <Section id="how-it-works" eyebrow="How It Works" title="How Ascend turns signals into action.">
+        <p className="max-w-4xl text-lg leading-8 text-slate-600 dark:text-slate-300">
+          Earlier signals. Better continuity. More targeted support. Ascend helps individuals act sooner, specialists focus attention where it matters, and organizations see meaningful trends without exposing unnecessary individual data.
+        </p>
+        <div className="mt-8 grid gap-4 lg:grid-cols-3">
+          {workflowSteps.map(({ title, icon: StepIcon }) => {
+            return (
+              <article key={title} className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+                <StepIcon className="size-6 text-[var(--brand-color)]" />
+                <h3 className="mt-5 text-lg font-black leading-7 text-slate-950 dark:text-white">{title}</h3>
+              </article>
+            );
+          })}
+        </div>
+        <p className="mt-8 max-w-4xl rounded-lg border border-slate-200 bg-white p-5 leading-7 text-slate-600 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300">
+          Recurring check-ins identify meaningful changes. Ascend then recommends one practical next action and, when appropriate, routes the individual for human review, follow-up, or specialist support.
+        </p>
+      </Section>
+
+      <Section title="Role-based, privacy-conscious workflows.">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {[
+            "Individual — completes brief check-ins, receives a personalized next action, tracks progress, and connects with appropriate support.",
+            "Strength & Conditioning Specialist — supports physical performance, conditioning, and performance-plan follow-up.",
+            "Physical Therapy / Injury Management — supports appropriate rehabilitation and injury-management workflows while maintaining clear separation between clinical care and performance support.",
+            "Mental Performance — supports cognitive skills, stress-management strategies, focus, and performance under pressure.",
+            "HPO / Program Manager — monitors program-level trends, support utilization, case flow, adherence, and aggregate readiness indicators.",
+            "Program Manager — oversees program activity, workflow status, aggregate trends, and operational coordination.",
+          ].map((role) => (
+            <div key={role} className="rounded-lg border border-slate-200 bg-white p-5 text-sm font-semibold leading-6 text-slate-700 dark:border-white/10 dark:bg-[#0e1628] dark:text-slate-200">
+              {role}
             </div>
+          ))}
+        </div>
+        <p className="mt-8 max-w-5xl rounded-lg border border-slate-200 bg-white p-5 leading-7 text-slate-600 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300">
+          Role-based access limits information to the people who need it, while leaders receive aggregate trends rather than unrestricted individual health data.
+        </p>
+      </Section>
 
-            <form onSubmit={handleSignIn} className="space-y-4 pt-1">
-              <div className="space-y-1">
-                <label htmlFor="email" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Email address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="dash-admin@ascend.mil"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-xs font-medium text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-[#0da2b3] focus:outline-none focus:ring-1 focus:ring-[#0da2b3] dark:border-white/10 dark:bg-[#070a13] dark:text-white"
-                    required
-                  />
-                </div>
-              </div>
+      <Section title="Built first for distributed military readiness. Designed to scale across high-demand workforces.">
+        <div className="grid gap-8 lg:grid-cols-2">
+          <p className="text-lg leading-8 text-slate-600 dark:text-slate-300">
+            For Guard and Reserve formations, Ascend extends preventive health and human performance support between drills. Individuals receive practical actions, specialists gain continuity between encounters, and authorized leaders see aggregate readiness trends across dispersed populations.
+          </p>
+          <p className="text-lg leading-8 text-slate-600 dark:text-slate-300">
+            The same preventive-health architecture can support distributed workforces in healthcare, public safety, manufacturing, logistics, aerospace and defense, and other high-demand environments.
+          </p>
+        </div>
+      </Section>
 
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="password" className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Password
-                  </label>
-                  <Link href="/forgot-password" className="text-[11px] font-bold text-[#0da2b3] hover:underline">
-                    Forgot password?
-                  </Link>
-                </div>
-                <div className="relative">
-                  <KeyRound className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="AscendDash!2026"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-10 text-xs font-medium text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-[#0da2b3] focus:outline-none focus:ring-1 focus:ring-[#0da2b3] dark:border-white/10 dark:bg-[#070a13] dark:text-white"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200"
-                    title={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-medium text-slate-600 dark:border-white/10 dark:bg-[#070a13] dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="size-4 rounded border-slate-300 text-[#0da2b3] focus:ring-[#0da2b3]"
-                />
-                Remember this device
-              </label>
-
-              {(formError || authError) && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-600 dark:border-rose-900/30 dark:bg-rose-950/20 dark:text-rose-400">
-                  {formError || authError}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={isLoading || !mounted || !isHydrated}
-                className="group flex w-full items-center justify-center gap-2 rounded-xl bg-[#0da2b3] px-5 py-3.5 text-xs font-extrabold text-white shadow-md transition-all duration-200 hover:bg-[#0b8b9a] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                <span>{isLoading ? "Signing in..." : "Sign in"}</span>
-                {!isLoading && <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />}
-              </button>
-            </form>
-
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-white/5 dark:bg-[#070a13]">
-              <div className="flex items-center gap-3">
-                <div className="flex size-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#0da2b3]/15 text-[#0da2b3]">
-                  <Clock className="size-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-900 dark:text-white">Staff test accounts</span>
-                    <span className="relative flex size-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-400">Examples: `dash-admin@ascend.mil`, `dash-scs@ascend.mil` with `AscendDash!2026`.</p>
-                </div>
-              </div>
+      <Section title="Outcomes Ascend is designed to support.">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {outcomes.map((outcome) => (
+            <div key={outcome} className="rounded-lg border border-slate-200 bg-white p-5 dark:border-white/10 dark:bg-[#0e1628]">
+              <CheckCircle2 className="size-5 text-[var(--brand-color)]" />
+              <h3 className="mt-4 text-base font-black text-slate-950 dark:text-white">{outcome}</h3>
             </div>
+          ))}
+        </div>
+        <p className="mt-8 max-w-5xl leading-7 text-slate-600 dark:text-slate-300">
+          Ascend is designed to help organizations address factors associated with burnout, absenteeism, performance decline, and avoidable cost. Outcome claims will be strengthened as pilot and research evidence matures.
+        </p>
+      </Section>
+
+      <Section id="research" eyebrow="Research" title="Research & Validation">
+        <div className="grid gap-6 lg:grid-cols-[1fr_1fr_1fr]">
+          <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+            <HeartPulse className="size-6 text-[var(--brand-color)]" />
+            <p className="mt-5 leading-7 text-slate-600 dark:text-slate-300">Current Status: Ascend is in pilot and capability-development stages, with ongoing evaluation of usability, engagement, preventive-health workflows, and distributed-force readiness.</p>
           </div>
-
-          <footer className="flex flex-wrap gap-6 pt-4 text-xs text-slate-400">
-            <Link href="/" className="transition-colors hover:text-slate-700 dark:hover:text-slate-200">
-              Live auth
-            </Link>
-            <Link href="/forgot-password" className="transition-colors hover:text-slate-700 dark:hover:text-slate-200">
-              Recovery
-            </Link>
-          </footer>
-        </section>
-
-        <section className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#124d54] via-[#0e3b40] to-[#071a1d] p-8 text-white lg:flex lg:p-12">
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:24px_24px] opacity-40" />
-          <div className="pointer-events-none absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#0da2b3]/20 blur-[90px]" />
-
-          <div className="relative z-10 flex justify-center">
-            <div className="inline-flex items-center rounded-2xl border border-white/10 bg-white/5 px-6 py-3.5 shadow-xl backdrop-blur-md">
-              <AscendBanner logoSize={56} />
-            </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+            <Layers3 className="size-6 text-[var(--brand-color)]" />
+            <p className="mt-5 leading-7 text-slate-600 dark:text-slate-300">Evaluation priorities include usability, engagement, adherence, time-to-support, workflow completion, readiness trends, and the effectiveness of preventive routing and support.</p>
           </div>
-
-          <div className="relative z-10 mx-auto my-auto max-w-lg space-y-4 py-8 text-center">
-            <h3 className="text-2xl font-bold leading-snug tracking-tight text-white/95 lg:text-3xl">
-              Real role login, real session identity, and shared staff profile management on the live backend.
-            </h3>
-            <div className="flex items-center justify-center gap-2 text-xs tracking-wider text-slate-300">
-              <span className="font-bold text-[#e2b13c]">Ascend</span>
-              <span className="text-slate-500">•</span>
-              <span>Connected to `api/v1` via ngrok</span>
-            </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+            <ShieldCheck className="size-6 text-[var(--brand-color)]" />
+            <p className="mt-5 leading-7 text-slate-600 dark:text-slate-300">Ascend supports preventive health, human performance, early risk identification, decision support, and appropriate routing. It is not positioned as an independent diagnostic system.</p>
+            <p className="mt-4 leading-7 text-slate-600 dark:text-slate-300">Ascend is not currently intended to independently diagnose, treat, cure, or prevent a medical condition and does not replace evaluation or care by a qualified healthcare professional.</p>
           </div>
+        </div>
+      </Section>
 
-          <div className="relative z-10 flex items-center justify-between text-[10px] font-semibold tracking-wider text-slate-400">
-            <div className="flex items-center gap-2">
-              <Lock className="size-3.5 text-[#e2b13c]" />
-              <span>CUI // OPSEC · Not a Government System of Record</span>
-            </div>
-            <div className="flex items-center gap-1 text-emerald-400">
-              <ShieldCheck className="size-3.5" />
-              <span>Bearer session live</span>
-            </div>
+      <Section title="Product status">
+        <div className="grid gap-4 lg:grid-cols-3">
+          {[
+            ["Available Now", "Public information pages, the /sign-in authorized-user frontend route, and role-routed dashboard frontend routes are present in the current build."],
+            ["In Pilot / Validation", "Current Status: Ascend is in pilot and capability-development stages, with ongoing evaluation of usability, engagement, preventive-health workflows, and distributed-force readiness."],
+            ["Planned Expansion", "No additional active production capabilities were verified from the current frontend/project material; unverified capabilities are not categorized as available."],
+          ].map(([title, body]) => (
+            <article key={title} className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+              <h3 className="text-lg font-black text-slate-950 dark:text-white">{title}</h3>
+              <p className="mt-4 leading-7 text-slate-600 dark:text-slate-300">{body}</p>
+            </article>
+          ))}
+        </div>
+        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+          <p className="rounded-lg border border-slate-200 bg-white p-5 leading-7 text-slate-600 dark:border-white/10 dark:bg-[#0e1628] dark:text-slate-300">Consistent, structured readiness data that supports reliable tracking and reporting.</p>
+          <p className="rounded-lg border border-slate-200 bg-white p-5 leading-7 text-slate-600 dark:border-white/10 dark:bg-[#0e1628] dark:text-slate-300">Standardized data and workflow rules designed to support reliable integrations and consistent system behavior.</p>
+        </div>
+      </Section>
+
+      <Section id="about" eyebrow="About" title="Dominion Performance">
+        <div className="grid gap-8 lg:grid-cols-[1fr_0.8fr]">
+          <div className="space-y-5 text-lg leading-8 text-slate-600 dark:text-slate-300">
+            <p>Readiness is the work we do every day, not the moment we need it.</p>
+            <p>Dominion Performance helps organizations identify and address emerging health and performance risks before they become preventable human and operational losses.</p>
+            <p>Dominion Performance is a preventive health and human performance company headquartered in Augusta, Georgia. We develop systems that help organizations identify emerging risk earlier, guide practical action, connect people to appropriate support, and improve continuity across distributed workforces. Ascend™ is our digital platform for continuous preventive health and human performance.</p>
+            <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Augusta, Georgia.</p>
           </div>
-        </section>
-      </main>
-    </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-white/10 dark:bg-[#0e1628]">
+            <UsersRound className="size-7 text-[var(--brand-color)]" />
+            <p className="mt-5 leading-7 text-slate-600 dark:text-slate-300">Ascend™ is developed and operated by Dominion Performance.</p>
+          </div>
+        </div>
+      </Section>
+    </PublicPageShell>
   );
 }

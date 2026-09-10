@@ -25,16 +25,12 @@ export function AscendBanner({
         >
           ASCEND
         </h2>
-        <div
-          className="mt-1 flex items-center gap-1.5 text-[9px] font-bold tracking-[0.16em] text-[#e2b13c]"
+        <p
+          className="mt-1 text-[9px] font-bold tracking-[0.16em] text-[#e2b13c]"
           style={{ fontFamily: "var(--font-plus-jakarta), sans-serif" }}
         >
-          <span>ASSESS</span>
-          <span className="text-[7px] text-[#e2b13c]/80 opacity-90">◂</span>
-          <span>ADAPT</span>
-          <span className="text-[7px] text-[#e2b13c]/80 opacity-90">▸</span>
-          <span>ASCENT</span>
-        </div>
+          Assess. Adapt. Ascend.
+        </p>
       </div>
     </div>
   );

@@ -40,7 +40,7 @@ export function ScsLayout({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   return (

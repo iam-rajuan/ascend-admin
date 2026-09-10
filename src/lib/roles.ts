@@ -5,7 +5,7 @@ import {
   Compass,
   Apple,
   Stethoscope,
-  Landmark,
+  Dumbbell,
   Brain,
   ClipboardPlus,
   type LucideIcon,
@@ -35,12 +35,12 @@ export type RoleDefinition = {
 export const roles: RoleDefinition[] = [
   { id: "admin", name: "Admin", icon: Shield, description: "System administration and configuration" },
   { id: "leadership", name: "Leadership", icon: Users, description: "Executive oversight and command metrics" },
-  { id: "plan", name: "Plan", icon: ClipboardList, description: "Strategic planning and scheduling" },
+  { id: "plan", name: "Program Manager", icon: ClipboardList, description: "oversees program activity, workflow status, aggregate trends, and operational coordination." },
   { id: "pc", name: "Purpose Coach", icon: Compass, description: "Spiritual/purpose readiness — opt-in support pathway" },
   { id: "nutritionist", name: "Nutritionist", icon: Apple, description: "Nutritional tracking and planning" },
-  { id: "mp", name: "MP", icon: Brain, description: "Mental performance coaching and readiness" },
-  { id: "pt-im", name: "PT/IM", icon: Stethoscope, description: "Physical therapy and readiness" },
-  { id: "scs", name: "SCS", icon: Landmark, description: "Support command services" },
+  { id: "mp", name: "Mental Performance", icon: Brain, description: "supports cognitive skills, stress-management strategies, focus, and performance under pressure." },
+  { id: "pt-im", name: "Physical Therapy / Injury Management", icon: Stethoscope, description: "supports appropriate rehabilitation and injury-management workflows while maintaining clear separation between clinical care and performance support." },
+  { id: "scs", name: "Strength & Conditioning Specialist", icon: Dumbbell, description: "supports physical performance, conditioning, and performance-plan follow-up." },
   { id: "idmt", name: "IDMT", icon: ClipboardPlus, description: "Independent duty medical technician handoffs" },
 ];
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useAuthStore } from "@/store/auth-store";
 import { getApiErrorMessage } from "@/lib/staff-api";
 import {
@@ -54,7 +54,7 @@ export function PlanView({ activeTab = "dashboard" }: { activeTab?: TabType }) {
   const [dashboard, setDashboard] = useState<PtimDashboardData | null>(null);
   const [records, setRecords] = useState<RecordUploadsResponse | null>(null);
 
-  const refreshAll = async () => {
+  const refreshAll = useCallback(async () => {
     if (!accessToken) return;
     setLoading(true);
     setError("");
@@ -70,13 +70,16 @@ export function PlanView({ activeTab = "dashboard" }: { activeTab?: TabType }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accessToken]);
 
   useEffect(() => {
     if (isHydrated && isAuthenticated && accessToken) {
-      void refreshAll();
+      const refreshTimer = window.setTimeout(() => {
+        void refreshAll();
+      }, 0);
+      return () => window.clearTimeout(refreshTimer);
     }
-  }, [accessToken, isAuthenticated, isHydrated]);
+  }, [accessToken, isAuthenticated, isHydrated, refreshAll]);
 
   if (loading) {
     return (
@@ -100,9 +103,9 @@ export function PlanView({ activeTab = "dashboard" }: { activeTab?: TabType }) {
     <div className="space-y-8 animate-fade-in">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Plan Role Operations</p>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Plan Management</h1>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Plan creation, template management, and reconditioning track assignment.</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Program Manager Operations</p>
+          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Program Manager</h1>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Oversees program activity, workflow status, aggregate trends, and operational coordination.</p>
         </div>
         <button
           onClick={() => void refreshAll()}
@@ -127,7 +130,7 @@ export function PlanView({ activeTab = "dashboard" }: { activeTab?: TabType }) {
       {activeTab === "assignment" && (
         <div className="space-y-6">
           <Card>
-            <CardHeader title="Plan Assignments & Templates" subtitle="Assign templates to operators and track progress." />
+            <CardHeader title="Program Assignments & Templates" subtitle="Assign templates to operators and track progress." />
             <div className="space-y-4 text-xs">
               <p className="text-slate-500">Records count: {records?.records ? records.records.length : 0}</p>
             </div>

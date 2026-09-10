@@ -24,7 +24,7 @@ export default function RolesPage() {
     if (!hasMounted) return;
     if (!isHydrated || isLoading) return;
     if (!isAuthenticated) {
-      router.replace("/");
+      router.replace("/sign-in");
       return;
     }
     if (currentUserRole) {
@@ -34,7 +34,7 @@ export default function RolesPage() {
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   if (!hasMounted || !isHydrated || isLoading || !isAuthenticated) {

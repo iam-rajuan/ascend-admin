@@ -108,7 +108,7 @@ export default function ProfilePage() {
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   const handleProfileSave = async (event: SubmitEvent<HTMLFormElement>) => {

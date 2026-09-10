@@ -191,7 +191,7 @@ export default function ForgotPasswordPage() {
                 Your password was reset against the live backend. Sign in again with the new password.
               </p>
               <button
-                onClick={() => router.push("/")}
+                onClick={() => router.push("/sign-in")}
                 className="mt-6 flex w-full items-center justify-center rounded-xl bg-[var(--brand-color)] px-5 py-3.5 text-sm font-bold text-white shadow-sm transition-all duration-200 hover:bg-[var(--brand-color-hover)]"
               >
                 Back to sign in
@@ -202,7 +202,7 @@ export default function ForgotPasswordPage() {
 
         {step !== "done" && (
           <Link
-            href="/"
+            href="/sign-in"
             className="mt-6 inline-flex items-center gap-1.5 text-xs font-semibold text-muted transition-colors duration-150 hover:text-foreground"
           >
             <ArrowLeft className="size-3.5" />

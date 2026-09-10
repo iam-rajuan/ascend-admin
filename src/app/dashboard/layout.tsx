@@ -26,7 +26,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
 
     if (!isAuthenticated) {
-      router.replace("/");
+      router.replace("/sign-in");
       return;
     }
 

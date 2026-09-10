@@ -17,12 +17,11 @@ import {
   Moon,
   Sun,
   TrendingUp,
-  User,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: TrendingUp, href: "/dashboard/plan/dashboard" },
-  { id: "assignment", label: "Plan Assignment", icon: ClipboardList, href: "/dashboard/plan/assignment" },
+  { id: "assignment", label: "Program Assignment", icon: ClipboardList, href: "/dashboard/plan/assignment" },
   { id: "reconditioning", label: "Reconditioning", icon: Activity, href: "/dashboard/plan/reconditioning" },
 ];
 
@@ -35,7 +34,7 @@ export function PlanLayout({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => {
     logout();
-    router.push("/");
+    router.push("/sign-in");
   };
 
   return (
@@ -56,7 +55,7 @@ export function PlanLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="px-5 pb-2 pt-6 font-sans text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            Plan Operations
+            Program Manager Operations
           </div>
 
           <nav className="space-y-1 px-3">
@@ -107,7 +106,7 @@ export function PlanLayout({ children }: { children: React.ReactNode }) {
             <AscendLogo width={20} height={20} showDetails={false} />
             <span className="text-sm font-semibold tracking-tight text-slate-800 dark:text-white">Ascend</span>
             <span className="select-none text-xs font-light text-slate-400 dark:text-slate-500">/</span>
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Plan Management Workspace</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Program Manager Workspace</span>
           </div>
 
           <div className="flex items-center gap-6">
@@ -143,7 +142,7 @@ export function PlanLayout({ children }: { children: React.ReactNode }) {
 
         <div className="z-10 flex h-6 w-full flex-shrink-0 items-center justify-center border-b border-slate-800 bg-slate-900 px-6 font-sans text-[9px] font-mono tracking-wider text-slate-500 select-none">
           <span className="mr-2 text-[var(--brand-color)]">•</span>
-          CUI // OPSEC · Live Plan Operations & Reconditioning
+          CUI // OPSEC · Live Program Manager Operations & Reconditioning
         </div>
 
         <main className="flex-1 space-y-8 overflow-y-auto bg-[#f8fafc] px-6 py-8 dark:bg-[#070a13] md:px-8">
