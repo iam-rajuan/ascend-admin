@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Clock, Eye, EyeOff, KeyRound, Mail, Moon, ShieldCheck, Sun } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, Mail, Moon, ShieldCheck, Sun } from "lucide-react";
 import { AscendBanner } from "@/components/ascend-banner";
 import { AscendLogo } from "@/components/ascend-logo";
 import { useTheme } from "@/hooks/use-theme";
@@ -18,8 +18,8 @@ export default function SignInPage() {
   const authError = useAuthStore((state) => state.authError);
   const loginWithPassword = useAuthStore((state) => state.loginWithPassword);
 
-  const [email, setEmail] = useState("dash-admin@ascend.mil");
-  const [password, setPassword] = useState("AscendDash!2026");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState("");
@@ -110,7 +110,7 @@ export default function SignInPage() {
                     autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="dash-admin@ascend.mil"
+                    placeholder="Email address"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-xs font-medium text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-[#0da2b3] focus:outline-none focus:ring-1 focus:ring-[#0da2b3] dark:border-white/10 dark:bg-[#070a13] dark:text-white"
                     required
                   />
@@ -130,7 +130,7 @@ export default function SignInPage() {
                     autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="AscendDash!2026"
+                    placeholder="Password"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-10 text-xs font-medium text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-[#0da2b3] focus:outline-none focus:ring-1 focus:ring-[#0da2b3] dark:border-white/10 dark:bg-[#070a13] dark:text-white"
                     required
                   />
@@ -165,24 +165,6 @@ export default function SignInPage() {
                 {!isLoading && <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />}
               </button>
             </form>
-
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-white/5 dark:bg-[#070a13]">
-              <div className="flex items-center gap-3">
-                <div className="flex size-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#0da2b3]/15 text-[#0da2b3]">
-                  <Clock className="size-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-900 dark:text-white">Staff test accounts</span>
-                    <span className="relative flex size-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-400">Examples: `dash-admin@ascend.mil`, `dash-scs@ascend.mil` with `AscendDash!2026`.</p>
-                </div>
-              </div>
-            </div>
           </div>
 
           <footer className="flex flex-wrap gap-6 pt-4 text-xs text-slate-400">
@@ -213,4 +195,3 @@ export default function SignInPage() {
     </div>
   );
 }
-
